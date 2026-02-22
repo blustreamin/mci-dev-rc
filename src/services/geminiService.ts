@@ -38,9 +38,27 @@ const THINKING_MODEL = 'gemini-3-pro-preview';
 const IMAGE_MODEL = 'gemini-2.5-flash-image';
 const LITE_MODEL = 'gemini-flash-lite-latest';
 
+function getApiKey(): string | undefined {
+    // 1. Process Env (Node/Build-time)
+    if (safeProcess.env.API_KEY) return safeProcess.env.API_KEY;
+    // 2. Vite Import Meta (Browser)
+    try {
+        // @ts-ignore
+        if (import.meta && import.meta.env) {
+            // @ts-ignore
+            if (import.meta.env.VITE_GOOGLE_API_KEY) return import.meta.env.VITE_GOOGLE_API_KEY;
+            // @ts-ignore
+            if (import.meta.env.VITE_GEMINI_API_KEY) return import.meta.env.VITE_GEMINI_API_KEY;
+            // @ts-ignore
+            if (import.meta.env.API_KEY) return import.meta.env.API_KEY;
+        }
+    } catch (e) {}
+    return undefined;
+}
+
 function getAI() {
-  const apiKey = 'AIzaSyAQgj4c9UTOU_lvCXUXupansTwIJgnYop4';
-  if (!apiKey) throw new Error("API Key missing. Please set process.env.API_KEY.");
+  const apiKey = getApiKey();
+  if (!apiKey) throw new Error("API Key missing. Set VITE_GOOGLE_API_KEY in Vercel env vars.");
   return new GoogleGenAI({ apiKey });
 }
 
