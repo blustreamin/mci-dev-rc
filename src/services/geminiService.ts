@@ -38,27 +38,9 @@ const THINKING_MODEL = 'gemini-3-pro-preview';
 const IMAGE_MODEL = 'gemini-2.5-flash-image';
 const LITE_MODEL = 'gemini-flash-lite-latest';
 
-function getApiKey(): string | undefined {
-    // 1. Process Env (Node/Build-time)
-    if (safeProcess.env.API_KEY) return safeProcess.env.API_KEY;
-    // 2. Vite Import Meta (Browser)
-    try {
-        // @ts-ignore
-        if (import.meta && import.meta.env) {
-            // @ts-ignore
-            if (import.meta.env.VITE_GOOGLE_API_KEY) return import.meta.env.VITE_GOOGLE_API_KEY;
-            // @ts-ignore
-            if (import.meta.env.VITE_GEMINI_API_KEY) return import.meta.env.VITE_GEMINI_API_KEY;
-            // @ts-ignore
-            if (import.meta.env.API_KEY) return import.meta.env.API_KEY;
-        }
-    } catch (e) {}
-    return undefined;
-}
-
 function getAI() {
-  const apiKey = getApiKey();
-  if (!apiKey) throw new Error("API Key missing. Set VITE_GOOGLE_API_KEY in Vercel env vars.");
+  const apiKey = safeProcess.env.API_KEY;
+  if (!apiKey) throw new Error("API Key missing. Please set process.env.API_KEY.");
   return new GoogleGenAI({ apiKey });
 }
 
@@ -193,7 +175,8 @@ export async function runPreSweepIntelligence(
         anchor_id: safeText(anchor),
         keyword_count: stats.keywords.length,
         total_volume: stats.totalSv,
-        evidence: stats.keywords.sort((a,b) => b.sv - a.sv).slice(0, 5).map(k => k.k),
+        evidence: stats.keywords.sort((a,b) => b.sv - a.sv).slice(0, 15).map(k => k.k),
+        evidenceWithVolume: stats.keywords.sort((a,b) => b.sv - a.sv).slice(0, 15).map(k => ({ keyword: k.k, volume: k.sv })),
         summary: `Aggregated Volume: ${stats.totalSv.toLocaleString()}`
     }));
 
