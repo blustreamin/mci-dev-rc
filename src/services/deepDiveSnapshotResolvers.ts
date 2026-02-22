@@ -1,8 +1,8 @@
 
 import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 import { FirestoreClient } from './firestoreClient';
-import { CategorySnapshotDoc } from '../types';
-import { SweepResult, SignalSnapshot, SignalItem, SignalResolutionResult } from '../types';
+import { CategorySnapshotDoc } from '../types.js';
+import { SweepResult, SignalSnapshot, SignalItem, SignalResolutionResult } from '../types.js';
 import { safeText } from '../utils/safety';
 import { DateUtils } from '../utils/dateUtils';
 import { DemandOutputStore, DEMAND_OUTPUT_VERSION } from './demandOutputStore';
