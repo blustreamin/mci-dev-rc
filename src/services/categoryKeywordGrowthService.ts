@@ -4,6 +4,7 @@ import { DataForSeoClient, DataForSeoRow } from './demand_vNext/dataforseoClient
 import { CredsStore } from './demand_vNext/credsStore';
 import { BootstrapServiceV3 } from './bootstrapServiceV3';
 import { getCuratedSeeds } from './curatedKeywordSeeds';
+import { expandKeywords } from './keywordExpansionEngine';
 import { JobControlService } from './jobControlService';
 import { HeartbeatController } from './jobHeartbeat';
 import { SnapshotResolver } from './snapshotResolver';
@@ -30,7 +31,7 @@ export const CategoryKeywordGrowthService = {
         maxAttempts?: number;
     }) {
         const { categoryId, snapshotId, jobId, targetVerifiedMin, minVolume } = params;
-        const maxAttempts = params.maxAttempts || 15; // More passes for DFS discovery rotation
+        const maxAttempts = params.maxAttempts || 5; // Each pass sends 700 keywords, 5 passes = 3500 max
         const BATCH_SIZE = 500;
         
         console.log(`[GROW_UNIVERSAL] Starting for ${categoryId} target=${targetVerifiedMin} minVol=${minVolume}`);
@@ -84,20 +85,26 @@ export const CategoryKeywordGrowthService = {
                 let candidates: string[] = [];
                 const existingSet = new Set(rows.map(r => normalizeKeywordString(r.keyword_text)));
 
-                // A1. PRIMARY: Curated high-volume keywords
-                // Send curated keywords directly to search_volume endpoint (WORKS through proxy)
+                // A1. PRIMARY: Expanded keyword corpus
+                // Use expansion engine for large corpus, curated seeds as fallback
                 let dfsDiscoveredRows: any[] = [];
-                const curatedKws = getCuratedSeeds(categoryId);
-                const CURATED_BATCH = 40;
-                const curatedOffset = ((attempt - 1) * CURATED_BATCH) % Math.max(curatedKws.length, 1);
-                const curatedBatch = curatedKws.slice(curatedOffset, curatedOffset + CURATED_BATCH)
-                    .filter(k => !existingSet.has(normalizeKeywordString(k)));
+                const allExpanded = expandKeywords(categoryId);
+                const newExpanded = allExpanded.filter(k => !existingSet.has(normalizeKeywordString(k)));
                 
-                if (curatedBatch.length > 0) {
-                    console.log(`[GROW_UNIVERSAL][CURATED] Pass ${attempt}: ${curatedBatch.length} curated keywords`);
+                // Send in batches of 700 (DFS limit), rotate by attempt
+                const EXPANSION_BATCH = 700;
+                const totalBatches = Math.ceil(newExpanded.length / EXPANSION_BATCH);
+                const batchIndex = (attempt - 1) % Math.max(totalBatches, 1);
+                const expansionBatch = newExpanded.slice(
+                    batchIndex * EXPANSION_BATCH, 
+                    (batchIndex + 1) * EXPANSION_BATCH
+                );
+                
+                if (expansionBatch.length > 0) {
+                    console.log(`[GROW_UNIVERSAL][EXPAND] Pass ${attempt}: batch ${batchIndex+1}/${totalBatches}, ${expansionBatch.length} keywords (${newExpanded.length} total new)`);
                     try {
                         const volRes = await DataForSeoClient.fetchGoogleVolumes_DFS({
-                            keywords: curatedBatch,
+                            keywords: expansionBatch,
                             location: 2356,
                             language: 'en',
                             creds,
@@ -113,12 +120,12 @@ export const CategoryKeywordGrowthService = {
                                     dfsDiscoveredRows.push(row);
                                 }
                             }
-                            console.log(`[GROW_UNIVERSAL][CURATED] returned=${volRes.parsedRows.length} valid=${dfsDiscoveredRows.length}`);
+                            console.log(`[GROW_UNIVERSAL][EXPAND] returned=${volRes.parsedRows.length} valid=${dfsDiscoveredRows.length}`);
                         }
                     } catch (e: any) {
-                        console.warn(`[GROW_UNIVERSAL][CURATED] Volume check failed: ${e.message}`);
+                        console.warn(`[GROW_UNIVERSAL][EXPAND] Volume check failed: ${e.message}`);
                     }
-                    await sleep(300);
+                    await sleep(500);
                 }
 
                 // A2. FALLBACK: Template generation (only if DFS discovery yielded < 50 candidates)
@@ -360,7 +367,7 @@ export const CategoryKeywordGrowthService = {
 
     async ensureAnchorQuotaAndValidate(categoryId: string, snapshotId: string, opts: { tier: string } | undefined, jobId: string) {
         const tier = (opts?.tier === 'LITE') ? 'LITE' : 'FULL';
-        const target = tier === 'FULL' ? 500 : 200; // Lowered: realistic with DFS discovery
+        const target = tier === 'FULL' ? 2000 : 500; // Raised: expansion engine provides 1500+ candidates
         return this.growToTargetUniversal({
             categoryId, snapshotId, jobId,
             targetVerifiedMin: target, targetVerifiedMax: target * 1.5, minVolume: 10, tier
