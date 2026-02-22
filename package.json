@@ -1,0 +1,39 @@
+{
+  "name": "beta-dev-men’s-care-india:-category-intelligence-analyst-|-mci-dev-rc-(main)",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "url": "^0.11.4",
+    "@vitejs/plugin-react": "^5.1.2",
+    "vite": "^7.3.1",
+    "react-dom": "^19.2.3",
+    "lucide-react": "^0.563.0",
+    "@google/genai": "^1.38.0",
+    "react": "^19.2.3",
+    "path": "^0.12.7",
+    "express": "^5.2.1",
+    "buffer": "^6.0.3",
+    "cors": "^2.8.6",
+    "crypto": "^1.0.1",
+    "fs": "^0.0.1-security",
+    "pg": "^8.17.2",
+    "assert": "^2.1.0",
+    "axios": "^1.13.3",
+    "stream": "^0.0.3",
+    "googleapis": "^170.1.0",
+    "firebase": "^12.8.0",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
+  }
+}
