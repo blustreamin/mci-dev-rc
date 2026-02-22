@@ -1,6 +1,7 @@
 
 import { CategoryMetrics, SnapshotLifecycle } from '../types';
 import { CERTIFIED_BENCHMARK } from '../certifiedBenchmark';
+import { getCalibratedDemand, getCalibratedReadiness, getCalibratedSpread } from './demandBenchmarkCalibration';
 
 export const MetricsCalculator = {
     // Legacy compute (wrapped)
@@ -90,34 +91,23 @@ export const MetricsCalculator = {
 
         const getLabel = (score: number) => score >= 7.5 ? 'High' : score >= 4.5 ? 'Medium' : 'Low';
 
-        // --- DEMAND NORMALIZATION (SAFE FIX) ---
+        // --- BENCHMARK CALIBRATION (per presentation methodology) ---
         let displayDemand = stats.demandIndex;
-        let isNormalized = false;
-
-        if (categoryId && CERTIFIED_BENCHMARK.categories[categoryId]) {
-            const bench = CERTIFIED_BENCHMARK.categories[categoryId];
-            const median = bench.median.demandIndexMn;
-
-            if (median > 0) {
-                const deviation = Math.abs(stats.demandIndex - median) / median;
-                const buffer = 0.05; // 5% buffer
-                const allowedVariance = (bench.maxVariancePct.demandIndexMn / 100) + buffer;
-
-                if (deviation > allowedVariance) {
-                    const lowerBound = median * 0.85;
-                    const upperBound = median * 1.15;
-                    displayDemand = Math.max(lowerBound, Math.min(upperBound, stats.demandIndex));
-                    isNormalized = true;
-                    console.log(`[DEMAND][NORMALISED] categoryId=${categoryId} raw=${stats.demandIndex.toFixed(2)} display=${displayDemand.toFixed(2)} benchmarkMedian=${median}`);
-                }
-            }
+        let displayReadiness = stats.readinessScore;
+        let displaySpread = stats.spreadScore;
+        
+        if (categoryId) {
+            displayDemand = getCalibratedDemand(categoryId, stats.demandIndex);
+            displayReadiness = getCalibratedReadiness(categoryId, stats.readinessScore);
+            displaySpread = getCalibratedSpread(categoryId, stats.spreadScore);
+            console.log(`[DEMAND][CALIBRATED] ${categoryId} raw=${stats.demandIndex.toFixed(2)} calibrated=${displayDemand.toFixed(2)} readiness=${displayReadiness.toFixed(1)} spread=${displaySpread.toFixed(1)}`);
         }
 
         // Derived metrics per presentation
-        const trendMultiplier = (trendValue || 0) / 100; // Convert percentage to decimal
+        const trendMultiplier = (trendValue || 0) / 100;
         const demandOverTimeGrowth = displayDemand * trendMultiplier;
         const demandOverTime = displayDemand + demandOverTimeGrowth;
-        const buyingIntentIndex = stats.spreadScore > 0 ? stats.readinessScore / stats.spreadScore : 0;
+        const buyingIntentIndex = displaySpread > 0 ? displayReadiness / displaySpread : 0;
 
         return {
             snapshotId,
@@ -126,17 +116,17 @@ export const MetricsCalculator = {
             demandIndex: {
                 value: stats.demandIndex, // RAW (CAV-based)
                 unit: 'searches_per_month',
-                display: `${displayDemand.toFixed(2)} Mn`
+                display: `${displayDemand.toFixed(2)} Mn` // Calibrated
             },
             readinessScore: {
-                value: stats.readinessScore,
+                value: displayReadiness,
                 scaleMax: 10,
-                label: getLabel(stats.readinessScore)
+                label: getLabel(displayReadiness)
             },
             spreadScore: {
-                value: stats.spreadScore,
+                value: displaySpread,
                 scaleMax: 10,
-                label: getLabel(stats.spreadScore)
+                label: getLabel(displaySpread)
             },
             trend: {
                 label: trendLabel,
