@@ -105,10 +105,18 @@ export const CategoryKeywordGrowthService = {
                         // Filter through guard and dedupe - these already have volume > 0
                         for (const dfsRow of discoveredWithVol) {
                             const kw = dfsRow.keyword;
-                            const guard = CategoryKeywordGuard.isSpecific(kw, categoryId);
-                            if (guard.ok && !existingSet.has(normalizeKeywordString(kw))) {
+                            const norm = kw.toLowerCase().trim();
+                            // Relaxed guard for DFS-discovered keywords:
+                            // DFS already returned these as related to our seeds, so skip head-term check
+                            // Only block: female terms, too short, year tokens
+                            const tokens = norm.split(/\s+/);
+                            const FEMALE = new Set(["women","womens","woman","female","ladies","girl","girls","she","her","bridal","bride","maternity","pregnancy","lipstick","mascara","foundation","eyeliner","bra","panty","lingerie","sanitary","period","menstrual","vagina","vaginal"]);
+                            const hasFemale = tokens.some(t => FEMALE.has(t));
+                            const tooShort = norm.length < 3;
+                            const hasYear = /\b(2023|2024|2025|2026)\b/.test(norm);
+                            
+                            if (!hasFemale && !tooShort && !hasYear && !existingSet.has(normalizeKeywordString(kw))) {
                                 candidates.push(kw);
-                                // Store volume data for direct use
                                 dfsDiscoveredRows.push(dfsRow);
                             }
                         }
