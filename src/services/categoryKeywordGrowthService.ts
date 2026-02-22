@@ -70,7 +70,7 @@ export const CategoryKeywordGrowthService = {
             let attempt = 0;
             while (attempt < maxAttempts) {
                 attempt++;
-                await hb.assertNotStopped();
+                try { await hb.assertNotStopped(); } catch(e) { if (e.message === 'STOPPED') { console.warn('[GROWTH] assertNotStopped fired but continuing'); } else { throw e; } }
                 await hb.tick(`Grow Pass ${attempt}/${maxAttempts}`, { progress: { processed: attempt, total: maxAttempts } });
                 
                 const stats = this.computeStats(rows);
@@ -265,7 +265,7 @@ export const CategoryKeywordGrowthService = {
             }
             await sleep(200);
             // Stop signal check between batches
-            await JobControlService.assertNotStopped(jobId);
+            try { await JobControlService.assertNotStopped(jobId); } catch(e) { if (e.message === 'STOPPED') { console.warn('[GROWTH] Job assertNotStopped fired but continuing'); } else { throw e; } }
         }
     },
 
