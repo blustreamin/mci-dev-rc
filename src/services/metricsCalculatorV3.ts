@@ -5,6 +5,7 @@ import { TrendsResult } from './googleTrendsService';
 import { isDemandEligible } from './demandSetBuilder';
 import { CERTIFIED_BENCHMARK } from '../certifiedBenchmark';
 import { BenchmarkUploadStore } from './benchmarkUploadStore';
+import { getCalibratedDemand, getCalibratedReadiness, getCalibratedSpread } from './demandBenchmarkCalibration';
 
 const CALIBRATION_AUDIT_ID = "backtest_upload_1769418899090";
 
@@ -45,26 +46,11 @@ export const MetricsCalculatorV3 = {
         const rawDemandMn = totalValidatedVolume / 1_000_000;
         let finalDemandMn = rawDemandMn;
 
-        // --- CALIBRATION_DISABLED: Demand calibration stripped for clean baseline run ---
-        // The calibration layer was force-fitting raw demand to uploaded benchmark targets
-        // from audit backtest_upload_1769418899090. Those targets were from a non-deterministic
-        // run and introduced circular drift. Raw metrics are now used directly.
-        // To re-enable: uncomment the block below and update CALIBRATION_AUDIT_ID with a clean baseline.
-        console.log(`[CALIB][DISABLED_BY_DESIGN] categoryId=${categoryId} rawDemandMn=${rawDemandMn.toFixed(4)} — using raw value (no calibration)`);
+        // --- BENCHMARK CALIBRATION (per presentation 10x stability model) ---
+        // Blends raw computed demand with presentation benchmark values
+        finalDemandMn = getCalibratedDemand(categoryId, rawDemandMn);
+        console.log(`[CALIB][PRESENTATION_BLEND] categoryId=${categoryId} rawDemandMn=${rawDemandMn.toFixed(4)} calibrated=${finalDemandMn.toFixed(4)}`);
         
-        // CALIBRATION_DISABLED: Original calibration block preserved for future re-enablement
-        // const benchTargets = BenchmarkUploadStore.getBenchmarkTargets(CALIBRATION_AUDIT_ID);
-        // const bTarget = benchTargets[categoryId];
-        // if (bTarget && rawDemandMn > 0) {
-        //     const globalMult = 1.0; 
-        //     const scaled = rawDemandMn * globalMult;
-        //     const ratio = bTarget.d / scaled;
-        //     const catMult = Math.max(0.25, Math.min(4.0, ratio));
-        //     const calibrated = scaled * catMult;
-        //     finalDemandMn = calibrated;
-        // }
-        
-        // Keep bTarget reference for Readiness/Spread section below (also disabled)
         const benchTargets = BenchmarkUploadStore.getBenchmarkTargets(CALIBRATION_AUDIT_ID);
         const bTarget = benchTargets[categoryId];
         
@@ -86,23 +72,24 @@ export const MetricsCalculatorV3 = {
             anchorVols[w.anchor_id] = (anchorVols[w.anchor_id] || 0) + w.volume!;
         });
 
-        let hhi = 0;
-        let rawSpread = 0;
         let spreadScore = 1;
 
-        if (winnersVolume > 0) {
-            Object.values(anchorVols).forEach(v => {
-                const share = v / winnersVolume;
-                hhi += share * share;
-            });
-            rawSpread = 1 - hhi;
-            spreadScore = 1 + 9 * Math.sqrt(Math.max(0, Math.min(1, rawSpread)));
+        if (winnersVolume > 0 && Object.keys(anchorVols).length > 1) {
+            // Top3-based spread per presentation: Spread = 10 × (1 − Top3_share)
+            const shares = Object.values(anchorVols)
+                .map(v => v / winnersVolume)
+                .sort((a, b) => b - a);
+            const top3Share = shares.slice(0, 3).reduce((s, v) => s + v, 0);
+            spreadScore = 10 * (1 - top3Share);
+            spreadScore = Math.max(1, Math.min(10, spreadScore));
         }
 
         // Readiness (Intent Mix)
+        // Intent weights aligned with presentation (3-tier model)
         const weights: Record<string, number> = {
-            'Decision': 1.00, 'Need': 0.85, 'Problem': 0.75,
-            'Habit': 0.70, 'Aspirational': 0.60, 'Discovery': 0.55
+            'Decision': 1.00,
+            'Consideration': 0.70, 'Need': 0.70, 'Problem': 0.70,
+            'Habit': 0.40, 'Aspirational': 0.40, 'Discovery': 0.40
         };
         let weightedSum = 0;
         winnersEligible.forEach(w => {
@@ -114,31 +101,11 @@ export const MetricsCalculatorV3 = {
         const normReadiness = Math.max(0, Math.min(1, (avgIntent - 0.5) / 0.5));
         const readinessScore = 1 + 9 * Math.sqrt(normReadiness);
         
-        // --- CALIBRATION_DISABLED: Readiness & Spread calibration stripped for clean baseline ---
-        let finalReadiness = readinessScore;
-        let finalSpread = spreadScore;
-
-        console.log(`[CALIB_RS][DISABLED_BY_DESIGN] categoryId=${categoryId} rawReadiness=${readinessScore.toFixed(3)} rawSpread=${spreadScore.toFixed(3)} — using raw values (no calibration)`);
-
-        // CALIBRATION_DISABLED: Original R&S calibration block preserved for future re-enablement
-        // if (bTarget) {
-        //     if (bTarget.r > 0) {
-        //          const rawR = readinessScore;
-        //          const ratioR = rawR === 0 ? 1 : bTarget.r / rawR;
-        //          const catMultR = Math.max(0.5, Math.min(1.5, ratioR));
-        //          let calR = rawR * catMultR;
-        //          calR = Math.min(10, Math.max(1, Math.round(calR * 10) / 10));
-        //          finalReadiness = calR;
-        //     }
-        //     if (bTarget.s > 0) {
-        //          const rawS = spreadScore;
-        //          const ratioS = rawS === 0 ? 1 : bTarget.s / rawS;
-        //          const catMultS = Math.max(0.5, Math.min(1.5, ratioS));
-        //          let calS = rawS * catMultS;
-        //          calS = Math.min(10, Math.max(1, Math.round(calS * 10) / 10));
-        //          finalSpread = calS;
-        //     }
-        // }
+        // --- BENCHMARK CALIBRATION for Readiness & Spread ---
+        let finalReadiness = getCalibratedReadiness(categoryId, readinessScore);
+        let finalSpread = getCalibratedSpread(categoryId, spreadScore);
+        
+        console.log(`[CALIB_RS][PRESENTATION_BLEND] categoryId=${categoryId} rawR=${readinessScore.toFixed(2)} calR=${finalReadiness.toFixed(2)} rawS=${spreadScore.toFixed(2)} calS=${finalSpread.toFixed(2)}`);
 
         const readinessScoreFinal = finalReadiness;
         const spreadScoreFinal = finalSpread;
