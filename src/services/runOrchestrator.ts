@@ -157,34 +157,30 @@ export const RunOrchestrator = {
 
         // --- STEP 2: DEMAND ---
         if (isRequested(WorkflowGear.DEMAND) || isRequested(WorkflowGear.DEEP_DIVE) || isRequested(WorkflowGear.PLAYBOOK)) {
-            const shouldRun = isRequested(WorkflowGear.DEMAND);
-            if (shouldRun) {
-                await this.runStep(catId, 'RUN_DEMAND', planId, signal, async (logFn) => {
-                    const res = await runCategorySweep(cat, context.strategy, 'India', logFn, signal, undefined, { jobId: 'PLAN', runId: planId, windowId: 'now', registryHash: '', keywordBaseHash: '', budget: {} as any });
-                    if (res.ok) {
-                        context.demand = res.data;
-                        setters.setDemandResults(prev => ({ ...prev, [cat.id]: { status: 'Success', data: res.data, lastAttempt: new Date().toISOString() } }));
-                    } else {
-                        throw new Error((res as any).error || "Demand sweep failed");
-                    }
-                });
-            }
+            // Auto-run demand if downstream gears need it
+            await this.runStep(catId, 'RUN_DEMAND', planId, signal, async (logFn) => {
+                const res = await runCategorySweep(cat, context.strategy, 'India', logFn, signal, undefined, { jobId: 'PLAN', runId: planId, windowId: 'now', registryHash: '', keywordBaseHash: '', budget: {} as any });
+                if (res.ok) {
+                    context.demand = res.data;
+                    setters.setDemandResults(prev => ({ ...prev, [cat.id]: { status: 'Success', data: res.data, lastAttempt: new Date().toISOString() } }));
+                } else {
+                    throw new Error((res as any).error || "Demand sweep failed");
+                }
+            });
         }
 
         // --- STEP 3: DEEP DIVE ---
         if ((isRequested(WorkflowGear.DEEP_DIVE) || isRequested(WorkflowGear.PLAYBOOK)) && context.demand) {
-            const shouldRun = isRequested(WorkflowGear.DEEP_DIVE);
-            if (shouldRun) {
-                await this.runStep(catId, 'RUN_DEEP_DIVE', planId, signal, async () => {
-                    const res = await runSingleDeepDive(catId, planId, context.demand);
-                    if (res.ok) {
-                        context.deepDive = res.data;
-                        setters.setDeepDiveResults(prev => ({ ...prev, [catId]: { status: 'Success', data: res.data, lastAttempt: new Date().toISOString() } }));
-                    } else {
-                        throw new Error((res as any).error || "Deep Dive failed");
-                    }
-                });
-            }
+            // Auto-run deep dive if Playbook needs it
+            await this.runStep(catId, 'RUN_DEEP_DIVE', planId, signal, async () => {
+                const res = await runSingleDeepDive(catId, planId, context.demand);
+                if (res.ok) {
+                    context.deepDive = res.data;
+                    setters.setDeepDiveResults(prev => ({ ...prev, [catId]: { status: 'Success', data: res.data, lastAttempt: new Date().toISOString() } }));
+                } else {
+                    throw new Error((res as any).error || "Deep Dive failed");
+                }
+            });
         }
 
         // --- STEP 4: PLAYBOOK ---
