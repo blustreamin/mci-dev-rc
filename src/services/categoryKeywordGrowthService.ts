@@ -83,20 +83,18 @@ export const CategoryKeywordGrowthService = {
                 let candidates: string[] = [];
                 const existingSet = new Set(rows.map(r => normalizeKeywordString(r.keyword_text)));
 
-                // A1. PRIMARY: DFS Keywords-for-Keywords Discovery
-                // Send head terms and brand seeds to DFS, get back real search queries
+                // A1. PRIMARY: DFS Keywords-for-Keywords Discovery WITH VOLUMES
+                // DFS returns keywords with real volumes - use them directly
+                let dfsDiscoveredRows: any[] = [];
                 try {
                     const discoverySeeds = BootstrapServiceV3.generateDiscoverySeeds(categoryId);
-                    // Rotate through seeds across attempts to get diverse results
                     const seedsPerBatch = 15;
-                    const seedBatch = discoverySeeds.slice(
-                        ((attempt - 1) * seedsPerBatch) % discoverySeeds.length, 
-                        ((attempt - 1) * seedsPerBatch) % discoverySeeds.length + seedsPerBatch
-                    );
+                    const offset = ((attempt - 1) * seedsPerBatch) % discoverySeeds.length;
+                    const seedBatch = discoverySeeds.slice(offset, offset + seedsPerBatch);
                     
                     if (seedBatch.length > 0) {
-                        console.log(`[GROW_UNIVERSAL][DFS_DISCOVERY] Pass ${attempt}: Sending ${seedBatch.length} seeds to DFS...`);
-                        const discovered = await DataForSeoClient.fetchKeywordsForKeywords({
+                        console.log(`[GROW_UNIVERSAL][DFS_DISCOVER] Pass ${attempt}: ${seedBatch.length} seeds -> DFS`);
+                        const discoveredWithVol = await DataForSeoClient.discoverKeywordsWithVolume({
                             keywords: seedBatch,
                             location: 2356,
                             language: 'en',
@@ -104,19 +102,22 @@ export const CategoryKeywordGrowthService = {
                             jobId
                         });
                         
-                        // Filter through guard and dedupe
-                        const validDiscovered = discovered.filter(k => {
-                            const guard = CategoryKeywordGuard.isSpecific(k, categoryId);
-                            return guard.ok && !existingSet.has(normalizeKeywordString(k));
-                        });
-                        
-                        candidates.push(...validDiscovered);
-                        console.log(`[GROW_UNIVERSAL][DFS_DISCOVERY] seeds=${seedBatch.length} discovered=${discovered.length} passedGuard=${validDiscovered.length}`);
+                        // Filter through guard and dedupe - these already have volume > 0
+                        for (const dfsRow of discoveredWithVol) {
+                            const kw = dfsRow.keyword;
+                            const guard = CategoryKeywordGuard.isSpecific(kw, categoryId);
+                            if (guard.ok && !existingSet.has(normalizeKeywordString(kw))) {
+                                candidates.push(kw);
+                                // Store volume data for direct use
+                                dfsDiscoveredRows.push(dfsRow);
+                            }
+                        }
+                        console.log(`[GROW_UNIVERSAL][DFS_DISCOVER] total=${discoveredWithVol.length} passedGuard=${dfsDiscoveredRows.length}`);
                     }
                 } catch (e: any) {
-                    console.warn(`[GROW_UNIVERSAL][DFS_DISCOVERY] DFS discovery failed: ${e.message}`);
+                    console.warn(`[GROW_UNIVERSAL][DFS_DISCOVER] Failed: ${e.message}`);
                 }
-                await sleep(300); // Rate limit between DFS calls
+                await sleep(300);
 
                 // A2. FALLBACK: Template generation (only if DFS discovery yielded < 50 candidates)
                 if (candidates.length < 50) {
@@ -142,22 +143,28 @@ export const CategoryKeywordGrowthService = {
                     break;
                 }
 
-                // B. Persist Unverified
+                // B. Persist - use DFS volumes directly for discovered keywords
+                const dfsVolumeMap = new Map(dfsDiscoveredRows.map(r => [normalizeKeywordString(r.keyword), r]));
                 const newRowObjs: SnapshotKeywordRow[] = [];
                 for (const kw of candidates) {
                      const id = await computeSHA256(`${kw}|${categoryId}|univ`);
+                     const dfsHit = dfsVolumeMap.get(normalizeKeywordString(kw));
                      newRowObjs.push({
                         keyword_id: id,
                         keyword_text: kw,
                         language_code: 'en', country_code: 'IN', category_id: categoryId,
                         anchor_id: this.inferAnchor(kw, categoryId, snapshot.anchors),
                         intent_bucket: BootstrapService.inferIntent(kw),
-                        status: 'UNVERIFIED',
+                        status: dfsHit ? 'VALID' : 'UNVERIFIED',
                         active: true,
                         created_at_iso: new Date().toISOString(),
-                        volume: null
+                        volume: dfsHit?.search_volume || null,
+                        cpc: dfsHit?.cpc || undefined,
+                        competition: dfsHit?.competition_index || undefined
                      });
                 }
+                const preValidated = newRowObjs.filter(r => r.status === 'VALID').length;
+                console.log(`[GROW_UNIVERSAL][PERSIST] ${newRowObjs.length} new rows, ${preValidated} pre-validated with DFS volume`);
                 
                 if (newRowObjs.length > 0) {
                     rows = [...rows, ...newRowObjs];
@@ -165,8 +172,8 @@ export const CategoryKeywordGrowthService = {
                     if (!writeRes.ok) throw { code: "SNAPSHOT_WRITE_NOOP", message: "Failed to persist candidates" };
                 }
 
-                // C. Validate (Batched)
-                const unverifiedRows = rows.filter(r => r.status === 'UNVERIFIED');
+                // C. Validate (Batched) — skip rows already validated by DFS discovery
+                const unverifiedRows = rows.filter(r => r.status === 'UNVERIFIED' && r.volume === null);
                 if (unverifiedRows.length > 0) {
                     await this.runValidationLoop(unverifiedRows, creds, jobId, categoryId);
                 }
@@ -252,6 +259,12 @@ export const CategoryKeywordGrowthService = {
                             r.volume = hit.search_volume || 0;
                             r.cpc = hit.cpc;
                             r.competition = hit.competition_index;
+                            // Mark as VALID if volume > 0, ZERO otherwise
+                            r.status = (r.volume && r.volume > 0) ? 'VALID' : 'ZERO';
+                        } else {
+                            // DFS returned no data for this keyword
+                            r.status = 'ZERO';
+                            r.volume = 0;
                         }
                     });
                 }
@@ -268,8 +281,8 @@ export const CategoryKeywordGrowthService = {
     computeStats(rows: SnapshotKeywordRow[]) {
         let valid = 0, zero = 0, unverified = 0;
         rows.forEach(r => {
-            if (r.status === 'UNVERIFIED' || r.volume === null) unverified++;
-            else if (r.active && (r.volume || 0) > 0) valid++;
+            if (r.status === 'UNVERIFIED' || r.volume === null || r.volume === undefined) unverified++;
+            else if (r.status === 'VALID' || (r.active && (r.volume || 0) > 0)) valid++;
             else if (r.active && (r.amazonVolume || 0) > 0) valid++;
             else zero++;
         });

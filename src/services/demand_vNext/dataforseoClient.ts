@@ -165,6 +165,29 @@ export const DataForSeoClient = {
         return [];
     },
 
+    async discoverKeywordsWithVolume(params: {
+        keywords: string[],
+        location: number,
+        language: string,
+        creds: { login: string; password: string },
+        jobId?: string
+    }): Promise<DataForSeoRow[]> {
+        const proxyUrl = await this.resolveDfsProxyEndpoint();
+        const path = 'keywords_data/google_ads/keywords_for_keywords/live';
+        
+        const postData = [{
+            keys: params.keywords,
+            location_code: params.location,
+            language_code: params.language
+        }];
+
+        const res = await this._execProxy(`/v3/${path}`, postData, params.creds, proxyUrl, params.jobId);
+        if (res.ok && res.parsedRows) {
+            return res.parsedRows.filter(r => (r.search_volume || 0) > 0);
+        }
+        return [];
+    },
+
     /**
      * Like fetchKeywordsForKeywords but returns keyword + volume pairs.
      * Used by the quality growth pipeline to skip zero-volume keywords.
