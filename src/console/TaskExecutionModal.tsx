@@ -80,16 +80,34 @@ export const TaskExecutionModal: React.FC<TaskExecutionModalProps> = ({
     }
   }, [job?.logs]);
 
+  const [simulatedProgress, setSimulatedProgress] = useState(0);
+
   useEffect(() => {
     if (!isOpen || !job || (job.status !== 'RUNNING' && job.status !== 'PENDING')) return;
     
     const startTime = new Date(job.startedAt).getTime();
     const interval = setInterval(() => {
-        setElapsedTime(Date.now() - startTime);
-    }, 1000);
+        const elapsed = Date.now() - startTime;
+        setElapsedTime(elapsed);
+        
+        // Smooth simulated progress: fast at start, slows down approaching 90%
+        // Uses asymptotic curve: never exceeds 92% until real completion
+        const seconds = elapsed / 1000;
+        const estimatedDuration = job.type === 'BUILD_STRATEGY' ? 120 : job.type === 'RUN_DEMAND' ? 60 : 90;
+        const ratio = Math.min(seconds / estimatedDuration, 1);
+        const simulated = Math.min(92, Math.floor(ratio * 100 * (1 - ratio * 0.3)));
+        setSimulatedProgress(simulated);
+    }, 500);
 
     return () => clearInterval(interval);
-  }, [isOpen, job?.status, job?.startedAt]);
+  }, [isOpen, job?.status, job?.startedAt, job?.type]);
+
+  // Reset simulated progress when job changes
+  useEffect(() => {
+    if (job?.status === 'COMPLETED') setSimulatedProgress(100);
+    else if (job?.status === 'FAILED' || job?.status === 'CANCELLED') setSimulatedProgress(0);
+    else if (job?.status === 'PENDING') setSimulatedProgress(0);
+  }, [job?.status]);
 
   const formatRuntime = (ms: number) => {
       const totalSeconds = Math.floor(ms / 1000);
@@ -110,7 +128,7 @@ export const TaskExecutionModal: React.FC<TaskExecutionModalProps> = ({
 
   if (job.isMinimized) return null;
 
-  const progressPercent = getProgressPercent(job.progress);
+  const progressPercent = isSuccess ? 100 : isFailed ? 0 : (getProgressPercent(job.progress) || simulatedProgress);
 
   return (
     <div className="fixed inset-0 z-[999] flex items-center justify-center p-4">
@@ -176,9 +194,11 @@ export const TaskExecutionModal: React.FC<TaskExecutionModalProps> = ({
                     </div>
                     <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
                         <div 
-                            className={`h-full transition-all duration-500 ease-out ${isFailed ? 'bg-red-500' : isSuccess ? 'bg-teal-500' : (isCancelled || isCancelling) ? 'bg-slate-400' : 'bg-blue-600'}`}
+                            className={`h-full rounded-full transition-all duration-1000 ease-out ${isFailed ? 'bg-red-500' : isSuccess ? 'bg-teal-500' : (isCancelled || isCancelling) ? 'bg-slate-400' : 'bg-gradient-to-r from-blue-500 to-indigo-500'}`}
                             style={{ width: `${progressPercent}%` }}
-                        />
+                        >
+                            {isRunning && <div className="h-full w-full bg-white/20 animate-pulse rounded-full" />}
+                        </div>
                     </div>
                 </div>
             </div>
