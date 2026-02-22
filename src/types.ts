@@ -1159,3 +1159,4 @@ export interface ValidityReport {
     windowId: string;
     categoryId: string;
     [key: string]: any;
+}
