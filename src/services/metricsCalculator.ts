@@ -9,8 +9,10 @@ export const MetricsCalculator = {
         weightedSum: number, 
         anchorVols: Record<string, number>
     ) {
-        // 1. Demand Index (Unthrottled)
-        const demandIndex = totalVol / 1000000;
+        // 1. Demand Index (Commercially Adjusted Volume / CAV)
+        // Per presentation: CAV = Σ(V_k × w_intent(k)) / 1,000,000
+        // weightedSum already contains Σ(volume × intent_weight)
+        const demandIndex = weightedSum / 1000000;
 
         // 2. Engagement Readiness (Smoothed)
         const avgIntent = totalVol > 0 ? weightedSum / totalVol : 0;
@@ -19,20 +21,22 @@ export const MetricsCalculator = {
         // Scale 1..10 with mild sqrt smoothing to avoid polarization
         const readinessScore = 1 + (9 * Math.sqrt(normReadiness));
 
-        // 3. Demand Spread (Smoothed HHI)
-        let hhi = 0;
+        // 3. Demand Spread (Top3-Based, per presentation formula)
+        // Spread = 10 × (1 − Top3_share)
         const activeAnchors = Object.values(anchorVols).filter(v => v > 0);
         const totalActiveVol = activeAnchors.reduce((sum, v) => sum + v, 0);
         
-        if (totalActiveVol > 0) {
-            activeAnchors.forEach(v => {
-                const share = v / totalActiveVol;
-                hhi += share * share;
-            });
+        let spreadScore = 1;
+        if (totalActiveVol > 0 && activeAnchors.length > 1) {
+            // Sort descending and take top 3 shares
+            const shares = activeAnchors
+                .map(v => v / totalActiveVol)
+                .sort((a, b) => b - a);
+            const top3Share = shares.slice(0, 3).reduce((s, v) => s + v, 0);
+            spreadScore = 10 * (1 - top3Share);
+            // Clamp to 1-10
+            spreadScore = Math.max(1, Math.min(10, spreadScore));
         }
-        
-        const rawSpread = activeAnchors.length > 1 ? (1 - hhi) : 0;
-        const spreadScore = 1 + (9 * Math.sqrt(rawSpread));
 
         return {
             demandIndex,
@@ -67,9 +71,12 @@ export const MetricsCalculator = {
         const isPartial = reasons.length > 0;
 
         // Computation (using core logic)
+        // Intent weights aligned with presentation formula:
+        // Urgent/Transaction = 1.0, Research/Evaluation = 0.7, Browse/Info = 0.4
         const intentWeights: Record<string, number> = {
-            'Decision': 1.00, 'Need': 0.85, 'Problem': 0.75, 
-            'Habit': 0.70, 'Aspirational': 0.60, 'Discovery': 0.55
+            'Decision': 1.00,
+            'Consideration': 0.70, 'Need': 0.70, 'Problem': 0.70,
+            'Habit': 0.40, 'Aspirational': 0.40, 'Discovery': 0.40
         };
 
         let weightedSum = 0;
@@ -108,14 +115,20 @@ export const MetricsCalculator = {
             }
         }
 
+        // Derived metrics per presentation
+        const trendMultiplier = (trendValue || 0) / 100; // Convert percentage to decimal
+        const demandOverTimeGrowth = displayDemand * trendMultiplier;
+        const demandOverTime = displayDemand + demandOverTimeGrowth;
+        const buyingIntentIndex = stats.spreadScore > 0 ? stats.readinessScore / stats.spreadScore : 0;
+
         return {
             snapshotId,
             snapshotStatus,
             computedAt: Date.now(),
             demandIndex: {
-                value: stats.demandIndex, // RAW UNTOUCHED
+                value: stats.demandIndex, // RAW (CAV-based)
                 unit: 'searches_per_month',
-                display: `${displayDemand.toFixed(2)} Mn` // NORMALIZED PRESENTATION
+                display: `${displayDemand.toFixed(2)} Mn`
             },
             readinessScore: {
                 value: stats.readinessScore,
@@ -130,6 +143,13 @@ export const MetricsCalculator = {
             trend: {
                 label: trendLabel,
                 valuePercent: trendValue
+            },
+            demandOverTime: {
+                growth: demandOverTimeGrowth,
+                total: demandOverTime
+            },
+            buyingIntentIndex: {
+                value: buyingIntentIndex
             },
             inputs: {
                 keywordCountTotal: totalCount,

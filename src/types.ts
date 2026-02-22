@@ -335,6 +335,13 @@ export interface CategoryMetrics {
         volumeSumAllKnown: number;
         coverage: number;
     };
+    demandOverTime?: {
+        growth: number;
+        total: number;
+    };
+    buyingIntentIndex?: {
+        value: number;
+    };
     quality: {
         isPartial: boolean;
         reasons: string[];
