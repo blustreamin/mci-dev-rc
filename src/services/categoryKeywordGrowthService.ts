@@ -3,6 +3,7 @@ import { CategorySnapshotStore } from './categorySnapshotStore';
 import { DataForSeoClient, DataForSeoRow } from './demand_vNext/dataforseoClient';
 import { CredsStore } from './demand_vNext/credsStore';
 import { BootstrapServiceV3 } from './bootstrapServiceV3';
+import { getCuratedSeeds } from './curatedKeywordSeeds';
 import { JobControlService } from './jobControlService';
 import { HeartbeatController } from './jobHeartbeat';
 import { SnapshotResolver } from './snapshotResolver';
@@ -83,49 +84,42 @@ export const CategoryKeywordGrowthService = {
                 let candidates: string[] = [];
                 const existingSet = new Set(rows.map(r => normalizeKeywordString(r.keyword_text)));
 
-                // A1. PRIMARY: DFS Keywords-for-Keywords Discovery WITH VOLUMES
-                // DFS returns keywords with real volumes - use them directly
+                // A1. PRIMARY: Curated high-volume keywords
+                // Send curated keywords directly to search_volume endpoint (WORKS through proxy)
                 let dfsDiscoveredRows: any[] = [];
-                try {
-                    const discoverySeeds = BootstrapServiceV3.generateDiscoverySeeds(categoryId);
-                    const seedsPerBatch = 15;
-                    const offset = ((attempt - 1) * seedsPerBatch) % discoverySeeds.length;
-                    const seedBatch = discoverySeeds.slice(offset, offset + seedsPerBatch);
-                    
-                    if (seedBatch.length > 0) {
-                        console.log(`[GROW_UNIVERSAL][DFS_DISCOVER] Pass ${attempt}: ${seedBatch.length} seeds -> DFS`);
-                        const discoveredWithVol = await DataForSeoClient.discoverKeywordsWithVolume({
-                            keywords: seedBatch,
+                const curatedKws = getCuratedSeeds(categoryId);
+                const CURATED_BATCH = 40;
+                const curatedOffset = ((attempt - 1) * CURATED_BATCH) % Math.max(curatedKws.length, 1);
+                const curatedBatch = curatedKws.slice(curatedOffset, curatedOffset + CURATED_BATCH)
+                    .filter(k => !existingSet.has(normalizeKeywordString(k)));
+                
+                if (curatedBatch.length > 0) {
+                    console.log(`[GROW_UNIVERSAL][CURATED] Pass ${attempt}: ${curatedBatch.length} curated keywords`);
+                    try {
+                        const volRes = await DataForSeoClient.fetchGoogleVolumes_DFS({
+                            keywords: curatedBatch,
                             location: 2356,
                             language: 'en',
                             creds,
-                            jobId
+                            useProxy: true,
+                            jobId,
+                            categoryId
                         });
                         
-                        // Filter through guard and dedupe - these already have volume > 0
-                        for (const dfsRow of discoveredWithVol) {
-                            const kw = dfsRow.keyword;
-                            const norm = kw.toLowerCase().trim();
-                            // Relaxed guard for DFS-discovered keywords:
-                            // DFS already returned these as related to our seeds, so skip head-term check
-                            // Only block: female terms, too short, year tokens
-                            const tokens = norm.split(/\s+/);
-                            const FEMALE = new Set(["women","womens","woman","female","ladies","girl","girls","she","her","bridal","bride","maternity","pregnancy","lipstick","mascara","foundation","eyeliner","bra","panty","lingerie","sanitary","period","menstrual","vagina","vaginal"]);
-                            const hasFemale = tokens.some(t => FEMALE.has(t));
-                            const tooShort = norm.length < 3;
-                            const hasYear = /\b(2023|2024|2025|2026)\b/.test(norm);
-                            
-                            if (!hasFemale && !tooShort && !hasYear && !existingSet.has(normalizeKeywordString(kw))) {
-                                candidates.push(kw);
-                                dfsDiscoveredRows.push(dfsRow);
+                        if (volRes.ok && volRes.parsedRows) {
+                            for (const row of volRes.parsedRows) {
+                                if ((row.search_volume || 0) > 0) {
+                                    candidates.push(row.keyword);
+                                    dfsDiscoveredRows.push(row);
+                                }
                             }
+                            console.log(`[GROW_UNIVERSAL][CURATED] returned=${volRes.parsedRows.length} valid=${dfsDiscoveredRows.length}`);
                         }
-                        console.log(`[GROW_UNIVERSAL][DFS_DISCOVER] total=${discoveredWithVol.length} passedGuard=${dfsDiscoveredRows.length}`);
+                    } catch (e: any) {
+                        console.warn(`[GROW_UNIVERSAL][CURATED] Volume check failed: ${e.message}`);
                     }
-                } catch (e: any) {
-                    console.warn(`[GROW_UNIVERSAL][DFS_DISCOVER] Failed: ${e.message}`);
+                    await sleep(300);
                 }
-                await sleep(300);
 
                 // A2. FALLBACK: Template generation (only if DFS discovery yielded < 50 candidates)
                 if (candidates.length < 50) {
