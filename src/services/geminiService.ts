@@ -39,7 +39,7 @@ const IMAGE_MODEL = 'gemini-2.5-flash-image';
 const LITE_MODEL = 'gemini-flash-lite-latest';
 
 function getAI() {
-  const apiKey = safeProcess.env.API_KEY;
+  const apiKey = 'AIzaSyAQgj4c9UTOU_lvCXUXupansTwIJgnYop4';
   if (!apiKey) throw new Error("API Key missing. Please set process.env.API_KEY.");
   return new GoogleGenAI({ apiKey });
 }

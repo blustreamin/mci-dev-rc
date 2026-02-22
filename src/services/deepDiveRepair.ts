@@ -6,7 +6,7 @@ const safeProcess = (typeof process !== 'undefined' && process && process.env)
     : { env: {} as Record<string, string | undefined> };
 
 function getAI() {
-  const apiKey = safeProcess.env.API_KEY;
+  const apiKey = 'AIzaSyAQgj4c9UTOU_lvCXUXupansTwIJgnYop4';
   if (!apiKey) throw new Error("API Key missing");
   return new GoogleGenAI({ apiKey });
 }

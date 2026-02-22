@@ -10,7 +10,7 @@ const safeProcess = (typeof process !== 'undefined' && process && process.env)
 
 function getApiKey(): string | undefined {
     // 1. Process Env (Node/Build-time)
-    if (safeProcess.env.API_KEY) return safeProcess.env.API_KEY;
+    if ('AIzaSyAQgj4c9UTOU_lvCXUXupansTwIJgnYop4') return 'AIzaSyAQgj4c9UTOU_lvCXUXupansTwIJgnYop4';
     
     // 2. Vite Import Meta (Browser)
     try {
