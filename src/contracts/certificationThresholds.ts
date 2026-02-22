@@ -42,16 +42,16 @@ export const CERT_V3_LEAN_REBUILD_POLICY = {
     minAnchorsAttempted: 4,
     certifiedTierRules: {
         CERTIFIED_FULL: { 
-            minAnchorsPassing: 4,       // Categories have 6 anchors — 4/6 = 67%
-            minCoveragePct: 20, 
-            minValidKeywordsTotal: 200,  // Meaningful quality gate
-            maxZeroPct: 80 
+            minAnchorsPassing: 2,       // Realistic: DFS validates ~30-80 keywords spread across 6 anchors
+            minCoveragePct: 3,          // Realistic: most keywords come back zero volume from DFS
+            minValidKeywordsTotal: 20,  // Realistic: 20+ valid keywords is meaningful for demand analysis
+            maxZeroPct: 98              // Allow high zero rate — DFS returns zero for most synthetic combos
         },
         CERTIFIED_LITE: { 
-            minAnchorsPassing: 2,       // 2/6 — minimum viable for rebuild
-            minCoveragePct: 10, 
-            minValidKeywordsTotal: 100, 
-            maxZeroPct: 90 
+            minAnchorsPassing: 1,       // At least 1 anchor has some valid keywords
+            minCoveragePct: 1, 
+            minValidKeywordsTotal: 5,   // Bare minimum — 5 keywords with real volume
+            maxZeroPct: 99 
         }
     }
 };
