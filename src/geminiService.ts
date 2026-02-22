@@ -21,7 +21,7 @@ const IMAGE_MODEL = 'gemini-2.5-flash-image';
 const THINKING_MODEL = 'gemini-3-pro-preview';
 
 function getAI() {
-  const apiKey = safeProcess.env.API_KEY;
+  const apiKey = import.meta.env.VITE_API_KEY || safeProcess.env.API_KEY;
   if (!apiKey) throw new Error("API Key missing. Please set process.env.API_KEY.");
   return new GoogleGenAI({ apiKey });
 }
