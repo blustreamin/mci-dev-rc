@@ -279,20 +279,24 @@ export const CategoryOutputCard: React.FC<CategoryOutputCardProps> = ({
                                             <p className="pl-2 border-l border-slate-100 mb-1">{toReactText(intel.summary)}</p>
                                         </div>
                                         <div className="flex flex-wrap gap-1">
-                                            {(Array.isArray(intel.evidenceWithVolume) && intel.evidenceWithVolume.length > 0 
-                                                ? intel.evidenceWithVolume 
-                                                : (Array.isArray(intel.evidence) ? intel.evidence : []).map((kw: string) => ({ keyword: kw, volume: 0 }))
-                                            ).slice(0, 12).map((item: any, k: number) => {
-                                                const kw = typeof item === 'string' ? item : item.keyword;
-                                                const vol = typeof item === 'string' ? 0 : (item.volume || 0);
-                                                const volDisplay = vol >= 1000 ? `${(vol/1000).toFixed(vol >= 10000 ? 0 : 1)}K` : vol > 0 ? String(vol) : '';
-                                                return (
-                                                    <span key={k} className="px-1.5 py-0.5 bg-slate-50 text-slate-500 text-[9px] rounded border border-slate-100 inline-flex items-center gap-1">
-                                                        {toReactText(kw)}
-                                                        {volDisplay && <span className="text-indigo-500 font-bold">{volDisplay}</span>}
-                                                    </span>
-                                                );
-                                            })}
+                                            {(() => {
+                                                // Try evidenceWithVolume first, fallback to evidence
+                                                const ewv = intel.evidenceWithVolume || intel.evidence_with_volume;
+                                                const items = Array.isArray(ewv) && ewv.length > 0
+                                                    ? ewv.map((item: any) => ({ keyword: item.keyword || item.k || '', volume: item.volume || item.sv || item.vol || 0 }))
+                                                    : (Array.isArray(intel.evidence) ? intel.evidence : []).map((kw: any) => ({ keyword: typeof kw === 'string' ? kw : kw.keyword || '', volume: typeof kw === 'object' ? (kw.volume || kw.sv || 0) : 0 }));
+                                                
+                                                return items.slice(0, 12).map((item: any, k: number) => {
+                                                    const vol = item.volume || 0;
+                                                    const volDisplay = vol >= 1000000 ? `${(vol/1000000).toFixed(1)}M` : vol >= 1000 ? `${(vol/1000).toFixed(vol >= 10000 ? 0 : 1)}K` : vol > 0 ? String(vol) : '';
+                                                    return (
+                                                        <span key={k} className="px-1.5 py-0.5 bg-slate-50 text-slate-500 text-[9px] rounded border border-slate-100 inline-flex items-center gap-1">
+                                                            {toReactText(item.keyword)}
+                                                            {volDisplay && <span className="text-indigo-500 font-bold">{volDisplay}</span>}
+                                                        </span>
+                                                    );
+                                                });
+                                            })()}
                                         </div>
                                     </div>
                                 </div>
