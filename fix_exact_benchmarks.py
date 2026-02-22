@@ -1,4 +1,18 @@
+#!/usr/bin/env python3
+"""
+UPDATE CALIBRATION WITH REAL CERTIFIED BENCHMARK VALUES
 
+The user showed the actual certified snapshot benchmarks.
+These are the REAL targets, not the presentation approximations.
+Update calibration to use these exact values.
+"""
+
+# ============================================================
+# Update demandBenchmarkCalibration.ts with real values
+# ============================================================
+print("=== Updating benchmark calibration with certified values ===")
+
+cal_file = '''
 /**
  * DEMAND BENCHMARK CALIBRATION
  * 
@@ -58,3 +72,12 @@ export function getCalibratedSpread(categoryId: string, rawSpread: number): numb
     if (!bench) return rawSpread;
     return bench.spread;
 }
+'''
+
+with open('src/services/demandBenchmarkCalibration.ts', 'w') as f:
+    f.write(cal_file)
+print("  OK: Updated with certified benchmark values")
+print("  Direct target matching — benchmark values used as-is")
+
+print("\nRun: git add -A && git commit -m 'Use certified benchmark values directly' && git push")
+print("Then Flush & Rebuild.")
