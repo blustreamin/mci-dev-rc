@@ -14,6 +14,7 @@ import { CorpusHealthRunner } from '../services/corpusHealthRunner';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { FirestoreClient } from '../services/firestoreClient';
 import { SimpleErrorBoundary } from '../components/SimpleErrorBoundary';
+import { KeywordDiagnosticsService } from '../services/keywordDiagnosticsService';
 
 interface Props {
     categoryId: string;
@@ -393,6 +394,27 @@ const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
         }
     };
 
+    const handleDiagnoseKeywords = async () => {
+        log(`[UI_ACTION][CLICK] DIAGNOSE_KEYWORDS`);
+        setLoading(true);
+        try {
+            const results = await KeywordDiagnosticsService.runDiagnostics(categoryId, log);
+            log(`[DIAG] Complete. ${results.length} keywords analyzed.`);
+            
+            // Export as CSV to console for easy copy
+            const csv = results
+                .sort((a, b) => b.volume - a.volume)
+                .map(r => `${r.keyword},${r.volume},${r.guardPass},${r.guardReason}`)
+                .join('\n');
+            console.log(`KEYWORD_DIAG_CSV for ${categoryId}:\nkeyword,volume,guard_pass,guard_reason\n${csv}`);
+            log(`[DIAG] CSV exported to browser console (F12 → Console tab)`);
+        } catch (e: any) {
+            log(`[DIAG][ERROR] ${e.message}`);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     return (
         <SimpleErrorBoundary>
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -466,6 +488,14 @@ const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
                         className="px-3 py-1.5 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-lg text-xs font-black uppercase tracking-widest hover:bg-emerald-100 disabled:opacity-50 flex items-center gap-1.5"
                     >
                         <ShieldCheck className="w-3.5 h-3.5"/> Certify
+                    </button>
+                    <div className="w-px h-6 bg-slate-200 mx-1"/>
+                    <button 
+                        onClick={handleDiagnoseKeywords}
+                        disabled={!!activeJobId || loading}
+                        className="px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg text-xs font-bold hover:bg-amber-100 disabled:opacity-50 flex items-center gap-1.5"
+                    >
+                        <Microscope className="w-3.5 h-3.5"/> Diagnose Keywords
                     </button>
                 </div>
             </div>
