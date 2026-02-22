@@ -11,9 +11,23 @@ const safeProcess = (typeof process !== 'undefined' && process && process.env)
     ? process 
     : { env: {} as Record<string, string | undefined> };
 
+function getApiKey(): string | undefined {
+    if (safeProcess.env.API_KEY) return safeProcess.env.API_KEY;
+    try {
+        // @ts-ignore
+        if (import.meta && import.meta.env) {
+            // @ts-ignore
+            if (import.meta.env.VITE_GOOGLE_API_KEY) return import.meta.env.VITE_GOOGLE_API_KEY;
+            // @ts-ignore
+            if (import.meta.env.VITE_GEMINI_API_KEY) return import.meta.env.VITE_GEMINI_API_KEY;
+        }
+    } catch (e) {}
+    return undefined;
+}
+
 function getAI() {
-  const apiKey = 'AIzaSyAQgj4c9UTOU_lvCXUXupansTwIJgnYop4';
-  if (!apiKey) throw new Error("API Key missing");
+  const apiKey = getApiKey();
+  if (!apiKey) throw new Error("API Key missing. Set VITE_GOOGLE_API_KEY.");
   return new GoogleGenAI({ apiKey });
 }
 
