@@ -116,8 +116,11 @@ export const ResetRebuildOrchestrator = {
                         await JobControlService.finishJob(jobId, 'STOPPED', 'DFS Rate Limited. Resume later.');
                         return;
                     }
-                    // Log error but CONTINUE — don't abort entire rebuild for one category
-                    await appendLog(`[REBUILD] ${cat.category}: FAILED - ${e.message}`, 'ERROR');
+                    if (e.message === 'STOPPED') {
+                        await appendLog(`[REBUILD] ${cat.category}: INTERNAL_STOP (non-fatal, continuing)`, 'WARN');
+                    } else {
+                        await appendLog(`[REBUILD] ${cat.category}: FAILED - ${e.message}`, 'ERROR');
+                    }
                     rebuiltCount++;
                     await updateState({ 'progress.rebuilt': rebuiltCount });
                 }
