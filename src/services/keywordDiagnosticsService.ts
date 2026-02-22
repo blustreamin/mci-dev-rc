@@ -48,22 +48,32 @@ export const KeywordDiagnosticsService = {
             onLog(`[DIAG][BATCH ${Math.floor(i/BATCH_SIZE)+1}] Sending ${batch.length} seeds: ${batch.slice(0, 5).join(', ')}...`);
             
             try {
-                const proxyUrl = await DataForSeoClient.resolveDfsProxyEndpoint();
-                const path = 'keywords_data/google_ads/keywords_for_keywords/live';
-                const postData = [{
-                    keys: batch,
-                    location_code: 2356,
-                    language_code: 'en'
-                }];
-
-                const res = await DataForSeoClient._execProxy(`/v3/${path}`, postData, creds, proxyUrl);
+                // Use discoverKeywordsWithVolume if available, else fetchKeywordsForKeywords
+                let allRows: any[] = [];
+                try {
+                    const proxyUrl = await DataForSeoClient.resolveDfsProxyEndpoint();
+                    const path = 'keywords_data/google_ads/keywords_for_keywords/live';
+                    const postData = [{
+                        keys: batch,
+                        location_code: 2356,
+                        language_code: 'en'
+                    }];
+                    const res = await DataForSeoClient._execProxy(`/v3/${path}`, postData, creds, proxyUrl);
+                    if (res.ok && res.parsedRows) allRows = res.parsedRows;
+                } catch (proxyErr: any) {
+                    onLog(`[DIAG][BATCH] Proxy call failed: ${proxyErr.message}, trying alternate....`);
+                    // Fallback: use the standard method which returns just keywords
+                    const kws = await DataForSeoClient.fetchKeywordsForKeywords({
+                        keywords: batch, location: 2356, language: 'en', creds
+                    });
+                    allRows = kws.map(k => ({ keyword: k, search_volume: 0, cpc: 0, competition_index: 0 }));
+                }
                 
-                if (res.ok && res.parsedRows) {
-                    totalDfsReturned += res.parsedRows.length;
-                    onLog(`[DIAG][BATCH] DFS returned ${res.parsedRows.length} keywords`);
+                if (allRows.length > 0) {
+                    totalDfsReturned += allRows.length;
+                    onLog(`[DIAG][BATCH] DFS returned ${allRows.length} keywords`);
                     
-                    // Log top 20 by volume
-                    const sorted = [...res.parsedRows].sort((a, b) => (b.search_volume || 0) - (a.search_volume || 0));
+                    const sorted = [...allRows].sort((a, b) => (b.search_volume || 0) - (a.search_volume || 0));
                     const withVol = sorted.filter(r => (r.search_volume || 0) > 0);
                     totalWithVolume += withVol.length;
                     
@@ -92,7 +102,7 @@ export const KeywordDiagnosticsService = {
                         }
                     }
                 } else {
-                    onLog(`[DIAG][BATCH][ERROR] ${res.error}`);
+                    onLog(`[DIAG][BATCH] No results returned`);
                 }
             } catch (e: any) {
                 onLog(`[DIAG][BATCH][ERROR] ${e.message}`);
