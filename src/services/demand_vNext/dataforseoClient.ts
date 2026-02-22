@@ -165,6 +165,38 @@ export const DataForSeoClient = {
         return [];
     },
 
+    /**
+     * Like fetchKeywordsForKeywords but returns keyword + volume pairs.
+     * Used by the quality growth pipeline to skip zero-volume keywords.
+     */
+    async fetchKeywordsForKeywordsWithVolume(params: {
+        keywords: string[],
+        location: number,
+        language: string,
+        creds: { login: string; password: string },
+        jobId?: string
+    }): Promise<{keyword: string, volume: number}[]> {
+        const proxyUrl = await this.resolveDfsProxyEndpoint();
+        const path = 'keywords_data/google_ads/keywords_for_keywords/live';
+        
+        const postData = [{
+            keys: params.keywords,
+            location_code: params.location,
+            language_code: params.language
+        }];
+
+        const res = await this._execProxy(`/v3/${path}`, postData, params.creds, proxyUrl, params.jobId);
+        if (res.ok && res.parsedRows) {
+            return res.parsedRows
+                .filter((r: any) => (r.search_volume || r.volume || 0) > 0)
+                .map((r: any) => ({ 
+                    keyword: r.keyword, 
+                    volume: r.search_volume || r.volume || 0 
+                }));
+        }
+        return [];
+    },
+
     async fetchAmazonLabsBulkSearchVolume(
         creds: { login: string; password: string },
         keywords: string[],

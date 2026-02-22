@@ -29,7 +29,7 @@ export const CategoryKeywordGrowthService = {
         maxAttempts?: number;
     }) {
         const { categoryId, snapshotId, jobId, targetVerifiedMin, minVolume } = params;
-        const maxAttempts = params.maxAttempts || 10;
+        const maxAttempts = params.maxAttempts || 15; // More passes for DFS discovery rotation
         const BATCH_SIZE = 500;
         
         console.log(`[GROW_UNIVERSAL] Starting for ${categoryId} target=${targetVerifiedMin} minVol=${minVolume}`);
@@ -77,67 +77,65 @@ export const CategoryKeywordGrowthService = {
                     break;
                 }
 
-                // A. Deficit Calculation
-                const targetPerAnchor = 40; 
+                // A. DFS DISCOVERY-FIRST APPROACH
+                // Instead of generating synthetic templates, use DFS to find REAL keywords
+                // that people actually search for, with real volumes.
                 let candidates: string[] = [];
-                
-                const anchorStats = this.getAnchorStats(rows, snapshot.anchors);
-                
-                for (const anchor of snapshot.anchors) {
-                    const s = anchorStats[anchor.anchor_id] || { valid: 0, total: 0 };
-                    const deficit = Math.max(0, targetPerAnchor - s.valid);
+                const existingSet = new Set(rows.map(r => normalizeKeywordString(r.keyword_text)));
+
+                // A1. PRIMARY: DFS Keywords-for-Keywords Discovery
+                // Send head terms and brand seeds to DFS, get back real search queries
+                try {
+                    const discoverySeeds = BootstrapServiceV3.generateDiscoverySeeds(categoryId);
+                    // Rotate through seeds across attempts to get diverse results
+                    const seedsPerBatch = 15;
+                    const seedBatch = discoverySeeds.slice(
+                        ((attempt - 1) * seedsPerBatch) % discoverySeeds.length, 
+                        ((attempt - 1) * seedsPerBatch) % discoverySeeds.length + seedsPerBatch
+                    );
                     
-                    if (deficit > 0) {
-                        const batchSize = Math.min(Math.max(deficit * 6, 250), 1000);
-                        const seeds = BootstrapServiceV3.generate(categoryId, anchor.anchor_id, batchSize);
-                        
-                        const filtered = seeds.filter(k => {
-                             const guard = CategoryKeywordGuard.isSpecific(k, categoryId);
-                             return guard.ok;
+                    if (seedBatch.length > 0) {
+                        console.log(`[GROW_UNIVERSAL][DFS_DISCOVERY] Pass ${attempt}: Sending ${seedBatch.length} seeds to DFS...`);
+                        const discovered = await DataForSeoClient.fetchKeywordsForKeywords({
+                            keywords: seedBatch,
+                            location: 2356,
+                            language: 'en',
+                            creds,
+                            jobId
                         });
                         
-                        candidates.push(...filtered);
-                    }
-                }
-
-                // Dedupe against existing
-                const existingSet = new Set(rows.map(r => normalizeKeywordString(r.keyword_text)));
-                candidates = candidates.filter(c => !existingSet.has(normalizeKeywordString(c)));
-                candidates = Array.from(new Set(candidates)).slice(0, 5000);
-
-                // A2. DFS Discovery Fallback — if templates alone aren't enough
-                if (candidates.length < 200 && attempt <= 2) {
-                    console.log(`[GROW_UNIVERSAL][DISCOVERY] Template candidates insufficient (${candidates.length}). Using DFS discovery...`);
-                    try {
-                        const discoverySeeds = BootstrapServiceV3.generateDiscoverySeeds(categoryId);
-                        // Take a subset of seeds per pass to spread discovery
-                        const seedBatch = discoverySeeds.slice((attempt - 1) * 20, attempt * 20);
+                        // Filter through guard and dedupe
+                        const validDiscovered = discovered.filter(k => {
+                            const guard = CategoryKeywordGuard.isSpecific(k, categoryId);
+                            return guard.ok && !existingSet.has(normalizeKeywordString(k));
+                        });
                         
-                        if (seedBatch.length > 0) {
-                            const discovered = await DataForSeoClient.fetchKeywordsForKeywords({
-                                keywords: seedBatch,
-                                location: 2356,
-                                language: 'en',
-                                creds,
-                                jobId
-                            });
-                            
-                            // Filter discovered through CategoryKeywordGuard
-                            const validDiscovered = discovered.filter(k => {
-                                const guard = CategoryKeywordGuard.isSpecific(k, categoryId);
-                                return guard.ok;
-                            });
-                            
-                            // Dedupe against existing
-                            const newDiscovered = validDiscovered.filter(k => !existingSet.has(normalizeKeywordString(k)));
-                            candidates.push(...newDiscovered);
-                            console.log(`[GROW_UNIVERSAL][DISCOVERY] seeds=${seedBatch.length} discovered=${discovered.length} passedGuard=${validDiscovered.length} new=${newDiscovered.length}`);
-                        }
-                    } catch (e: any) {
-                        console.warn(`[GROW_UNIVERSAL][DISCOVERY] DFS discovery failed: ${e.message}`);
+                        candidates.push(...validDiscovered);
+                        console.log(`[GROW_UNIVERSAL][DFS_DISCOVERY] seeds=${seedBatch.length} discovered=${discovered.length} passedGuard=${validDiscovered.length}`);
                     }
-                    await sleep(500); // Rate limit
+                } catch (e: any) {
+                    console.warn(`[GROW_UNIVERSAL][DFS_DISCOVERY] DFS discovery failed: ${e.message}`);
                 }
+                await sleep(300); // Rate limit between DFS calls
+
+                // A2. FALLBACK: Template generation (only if DFS discovery yielded < 50 candidates)
+                if (candidates.length < 50) {
+                    const anchorStats = this.getAnchorStats(rows, snapshot.anchors);
+                    for (const anchor of snapshot.anchors) {
+                        const s = anchorStats[anchor.anchor_id] || { valid: 0, total: 0 };
+                        const deficit = Math.max(0, 40 - s.valid);
+                        if (deficit > 0) {
+                            const seeds = BootstrapServiceV3.generate(categoryId, anchor.anchor_id, 500);
+                            const filtered = seeds.filter(k => {
+                                const guard = CategoryKeywordGuard.isSpecific(k, categoryId);
+                                return guard.ok && !existingSet.has(normalizeKeywordString(k));
+                            });
+                            candidates.push(...filtered);
+                        }
+                    }
+                }
+                
+                candidates = Array.from(new Set(candidates)).slice(0, 5000);
 
                 if (candidates.length === 0 && stats.unverified === 0) {
                     console.log("[GROW_UNIVERSAL] No new candidates and no unverified. Stopping.");
@@ -347,7 +345,7 @@ export const CategoryKeywordGrowthService = {
 
     async ensureAnchorQuotaAndValidate(categoryId: string, snapshotId: string, opts: { tier: string } | undefined, jobId: string) {
         const tier = (opts?.tier === 'LITE') ? 'LITE' : 'FULL';
-        const target = tier === 'FULL' ? 2000 : 500;
+        const target = tier === 'FULL' ? 500 : 200; // Lowered: realistic with DFS discovery
         return this.growToTargetUniversal({
             categoryId, snapshotId, jobId,
             targetVerifiedMin: target, targetVerifiedMax: target * 1.5, minVolume: 10, tier

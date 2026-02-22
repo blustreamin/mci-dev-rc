@@ -40,7 +40,7 @@ export const CorpusRebuildService = {
         // Switched to FULL tier to ensure meaningful demand metrics
         return await CategoryKeywordGrowthService.rebuildCategorySnapshotV3(
             categoryId,
-            { targetValidPerAnchor: 200, tier: 'FULL' },
+            { targetValidPerAnchor: 80, tier: 'FULL' } // Lowered: 80 * 6 anchors = 480 target valid,
             jobId
         );
     },
