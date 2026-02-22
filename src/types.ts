@@ -1159,36 +1159,3 @@ export interface ValidityReport {
     windowId: string;
     categoryId: string;
     [key: string]: any;
-}
-export interface SignalItem {
-    title: string;
-    description: string;
-    impact: "HIGH" | "MEDIUM" | "LOW";
-    evidence: string[];
-    keywords: string[];
-}
-
-export interface SignalSnapshot {
-    snapshotId: string;
-    harvestVersion: string;
-    timeWindow: string;
-    signals: {
-        problems: SignalItem[];
-        aspirations: SignalItem[];
-        routines: SignalItem[];
-        triggers: SignalItem[];
-        barriers: SignalItem[];
-        trends: SignalItem[];
-        needGaps: SignalItem[];
-    };
-}
-
-export interface SignalResolutionResult {
-    ok: boolean;
-    data?: SignalSnapshot;
-    snapshotId?: string;
-    harvestVersion?: string;
-    resolvedMonthKey?: string;
-    mode: "EXACT" | "FALLBACK_LATEST" | "NONE";
-    reason?: string;
-}
