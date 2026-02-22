@@ -9,10 +9,8 @@ export const MetricsCalculator = {
         weightedSum: number, 
         anchorVols: Record<string, number>
     ) {
-        // 1. Demand Index (Commercially Adjusted Volume / CAV)
-        // Per presentation: CAV = Σ(V_k × w_intent(k)) / 1,000,000
-        // weightedSum already contains Σ(volume × intent_weight)
-        const demandIndex = weightedSum / 1000000;
+        // 1. Demand Index (Total Validated Volume)
+        const demandIndex = totalVol / 1000000;
 
         // 2. Engagement Readiness (Smoothed)
         const avgIntent = totalVol > 0 ? weightedSum / totalVol : 0;
