@@ -109,6 +109,137 @@ const AnchorBreakup: React.FC<{ rows: SnapshotKeywordRow[] }> = ({ rows }) => {
     );
 };
 
+const IntentBreakup: React.FC<{ rows: SnapshotKeywordRow[] }> = ({ rows }) => {
+    const [expanded, setExpanded] = useState(true);
+
+    const stats = React.useMemo(() => {
+        const map: Record<string, { count: number; validCount: number; totalVolume: number; avgVolume: number; topKeywords: { keyword: string; volume: number }[] }> = {};
+        
+        rows.forEach(r => {
+            const intent = r.intent_bucket || 'Unknown';
+            if (!map[intent]) map[intent] = { count: 0, validCount: 0, totalVolume: 0, avgVolume: 0, topKeywords: [] };
+            const s = map[intent];
+            s.count++;
+            const vol = r.volume || 0;
+            if (vol > 0) {
+                s.validCount++;
+                s.totalVolume += vol;
+                s.topKeywords.push({ keyword: r.keyword_text, volume: vol });
+            }
+        });
+
+        // Calculate avg and sort top keywords
+        Object.values(map).forEach(s => {
+            s.avgVolume = s.validCount > 0 ? Math.round(s.totalVolume / s.validCount) : 0;
+            s.topKeywords.sort((a, b) => b.volume - a.volume);
+            s.topKeywords = s.topKeywords.slice(0, 5);
+        });
+
+        const grandTotal = Object.values(map).reduce((sum, s) => sum + s.totalVolume, 0);
+
+        return {
+            intents: Object.entries(map).sort((a, b) => b[1].totalVolume - a[1].totalVolume),
+            grandTotal
+        };
+    }, [rows]);
+
+    if (rows.length === 0) return null;
+
+    const formatVol = (v: number) => v >= 1000000 ? `${(v/1000000).toFixed(1)}M` : v >= 1000 ? `${(v/1000).toFixed(v >= 10000 ? 0 : 1)}K` : String(v);
+
+    const intentColors: Record<string, string> = {
+        'Decision': 'bg-emerald-50 text-emerald-700 border-emerald-200',
+        'Consideration': 'bg-blue-50 text-blue-700 border-blue-200',
+        'Need': 'bg-violet-50 text-violet-700 border-violet-200',
+        'Problem': 'bg-amber-50 text-amber-700 border-amber-200',
+        'Discovery': 'bg-indigo-50 text-indigo-700 border-indigo-200',
+        'Habit': 'bg-slate-50 text-slate-600 border-slate-200',
+        'Aspirational': 'bg-rose-50 text-rose-700 border-rose-200',
+    };
+    const defaultColor = 'bg-slate-50 text-slate-600 border-slate-200';
+
+    const barColors: Record<string, string> = {
+        'Decision': 'bg-emerald-500',
+        'Consideration': 'bg-blue-500',
+        'Need': 'bg-violet-500',
+        'Problem': 'bg-amber-500',
+        'Discovery': 'bg-indigo-500',
+        'Habit': 'bg-slate-400',
+        'Aspirational': 'bg-rose-500',
+    };
+    const defaultBarColor = 'bg-slate-400';
+
+    return (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
+            <div 
+                className="px-4 py-3 bg-slate-50 border-b border-slate-100 flex justify-between items-center cursor-pointer"
+                onClick={() => setExpanded(!expanded)}
+            >
+                <div className="flex items-center gap-2">
+                    <Activity className="w-4 h-4 text-violet-500"/>
+                    <h4 className="text-xs font-bold text-slate-700 uppercase tracking-widest">Intent Breakup ({stats.intents.length} Buckets)</h4>
+                    <span className="text-[10px] text-slate-400 font-medium ml-2">Total Volume: {formatVol(stats.grandTotal)}</span>
+                </div>
+                {expanded ? <ChevronUp className="w-4 h-4 text-slate-400"/> : <ChevronDown className="w-4 h-4 text-slate-400"/>}
+            </div>
+            
+            {expanded && (
+                <div className="p-4">
+                    {/* Volume Distribution Bar */}
+                    <div className="h-3 w-full rounded-full overflow-hidden flex mb-4 bg-slate-100">
+                        {stats.intents.map(([intent, s]) => {
+                            const pct = stats.grandTotal > 0 ? (s.totalVolume / stats.grandTotal) * 100 : 0;
+                            if (pct < 1) return null;
+                            return (
+                                <div 
+                                    key={intent} 
+                                    className={`h-full ${barColors[intent] || defaultBarColor} transition-all`}
+                                    style={{ width: `${pct}%` }}
+                                    title={`${intent}: ${pct.toFixed(1)}%`}
+                                />
+                            );
+                        })}
+                    </div>
+
+                    {/* Intent Cards */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {stats.intents.map(([intent, s]) => {
+                            const pct = stats.grandTotal > 0 ? ((s.totalVolume / stats.grandTotal) * 100).toFixed(1) : '0';
+                            const colorClass = intentColors[intent] || defaultColor;
+                            
+                            return (
+                                <div key={intent} className={`rounded-xl border p-4 ${colorClass}`}>
+                                    <div className="flex justify-between items-start mb-2">
+                                        <div>
+                                            <span className="text-xs font-black uppercase tracking-wider">{intent}</span>
+                                            <span className="text-[10px] ml-2 opacity-60">{pct}%</span>
+                                        </div>
+                                        <span className="text-sm font-black">{formatVol(s.totalVolume)}</span>
+                                    </div>
+                                    <div className="flex gap-4 text-[10px] font-bold opacity-70 mb-3">
+                                        <span>{s.validCount} keywords</span>
+                                        <span>Avg: {formatVol(s.avgVolume)}</span>
+                                    </div>
+                                    {s.topKeywords.length > 0 && (
+                                        <div className="space-y-1 pt-2 border-t border-current/10">
+                                            {s.topKeywords.map((kw, k) => (
+                                                <div key={k} className="flex justify-between text-[10px]">
+                                                    <span className="truncate mr-2 opacity-80">{kw.keyword}</span>
+                                                    <span className="font-bold shrink-0">{formatVol(kw.volume)}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
 const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
     const [rows, setRows] = useState<SnapshotKeywordRow[]>([]);
     const [loading, setLoading] = useState(false);
@@ -550,6 +681,7 @@ const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <div className="lg:col-span-2">
                         <AnchorBreakup rows={rows} />
+                        <IntentBreakup rows={rows} />
                         
                         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
                             <div className="overflow-x-auto max-h-[500px]">
