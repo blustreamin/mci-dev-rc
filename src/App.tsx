@@ -367,7 +367,7 @@ const App: React.FC = () => {
                                 { gear: 'STRATEGY', icon: Target, label: 'Consumer Needs' },
                                 { gear: 'DEMAND', icon: BarChart3, label: 'Demand' },
                                 { gear: 'DEEP_DIVE', icon: Microscope, label: 'Deep Dive' },
-                                { gear: 'PLAYBOOK', icon: Zap, label: 'Playbook' },
+                                // Playbook hidden
                                 { gear: 'SIGNALS', icon: Wifi, label: 'Signals' },
                             ].map(({ gear, icon: Icon, label }) => (
                                 <button 
