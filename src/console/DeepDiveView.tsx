@@ -568,12 +568,27 @@ export const DeepDiveView: React.FC<DeepDiveViewProps> = ({ initialContext }) =>
                                     {toReactText(result.executiveSummary.title)}
                                 </h2>
                                 <div className="text-white">
-                                    <Bullets 
-                                        items={result.executiveSummary.bullets || []} 
-                                        textColor="text-white" 
-                                        markerColor="bg-white/50 group-hover:bg-white" 
-                                        className="space-y-3" 
-                                    />
+                                    {(() => {
+                                        const catId = result.categoryId || selectedCat;
+                                        const bench = PRESENTATION_BENCHMARKS[catId];
+                                        const rawBullets = result.executiveSummary?.bullets || [];
+                                        if (!bench) return <Bullets items={rawBullets} textColor="text-white" markerColor="bg-white/50 group-hover:bg-white" className="space-y-3" />;
+                                        
+                                        const trendStr = bench.trend5y > 0 ? `+${bench.trend5y.toFixed(1)}%` : `${bench.trend5y.toFixed(1)}%`;
+                                        const trendDesc = bench.trend5y > 30 ? 'strong structural growth, signalling rapid adoption and category expansion'
+                                            : bench.trend5y > 10 ? 'healthy growth driven by increasing awareness and penetration'
+                                            : bench.trend5y > 0 ? 'steady but moderate growth, indicating a maturing category'
+                                            : bench.trend5y > -10 ? 'flat to slight decline, suggesting a category in transition'
+                                            : 'structural decline, signalling a shift away from traditional formats';
+                                        
+                                        // Replace first 2 bullets with deterministic metric-grounded versions
+                                        const metricBullet1 = `Category volume stands at ${bench.demandMn.toFixed(2)} Million searches, ${bench.demandMn > 3 ? 'confirming high-intent saturation across Tier-2/3 markets' : bench.demandMn > 1 ? 'indicating a mid-scale category with growing digital intent' : 'revealing an emerging niche with concentrated but growing demand'}.`;
+                                        const metricBullet2 = `5Y Growth trend of ${trendStr} indicates ${trendDesc}.`;
+                                        
+                                        // Keep qualitative bullets from index 2 onward
+                                        const qualBullets = rawBullets.slice(2);
+                                        return <Bullets items={[metricBullet1, metricBullet2, ...qualBullets]} textColor="text-white" markerColor="bg-white/50 group-hover:bg-white" className="space-y-3" />;
+                                    })()}
                                 </div>
                             </div>
                             <div className="absolute -right-10 -bottom-10 opacity-5 pointer-events-none">
