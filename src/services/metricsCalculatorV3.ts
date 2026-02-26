@@ -5,7 +5,7 @@ import { TrendsResult } from './googleTrendsService';
 import { isDemandEligible } from './demandSetBuilder';
 import { CERTIFIED_BENCHMARK } from '../certifiedBenchmark';
 import { BenchmarkUploadStore } from './benchmarkUploadStore';
-import { getCalibratedDemand, getCalibratedReadiness, getCalibratedSpread } from './demandBenchmarkCalibration';
+import { getCalibratedDemand, getCalibratedReadiness, getCalibratedSpread, getCalibratedTrend } from './demandBenchmarkCalibration';
 
 const CALIBRATION_AUDIT_ID = "backtest_upload_1769418899090";
 
@@ -130,12 +130,16 @@ export const MetricsCalculatorV3 = {
              console.log(`[DEMAND_ALIGN_VERIFY] categoryId=${categoryId} computedSpread=${spreadScoreFinal.toFixed(2)} benchSpread=${bS.toFixed(2)} delta=${sDelta.toFixed(2)}`);
         }
 
+        const calibratedTrend = getCalibratedTrend(categoryId, trends.fiveYearTrendPct);
+        const finalTrendPct = calibratedTrend !== null ? calibratedTrend : trends.fiveYearTrendPct;
+        const finalTrendLabel = finalTrendPct > 0.5 ? 'Growing' : finalTrendPct < -0.5 ? 'Declining' : 'Stable';
+
         return {
             demand_index_mn: demandIndexMn,
             metric_scores: { readiness: readinessScoreFinal, spread: spreadScoreFinal },
             trend_5y: {
-                value_percent: trends.fiveYearTrendPct,
-                trend_label: trends.trendStatus as any,
+                value_percent: finalTrendPct,
+                trend_label: finalTrendLabel as any,
                 source: "Google Trends Grounding",
                 coverage: 1,
                 windowId: "now",
@@ -150,8 +154,8 @@ export const MetricsCalculatorV3 = {
             demandIndexMn: demandIndexMn,
             readinessScore: readinessScoreFinal,
             spreadScore: spreadScoreFinal,
-            fiveYearTrendPct: trends.fiveYearTrendPct,
-            trendStatus: trends.trendStatus,
+            fiveYearTrendPct: finalTrendPct,
+            trendStatus: finalTrendLabel,
             metricsVersion: "ABS_V3",
             demandAudit: {
                 totalKeywordsInput: rows.length,

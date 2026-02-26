@@ -53,11 +53,18 @@ export const DeepDiveServiceV2 = {
 
         // Strict Metric Extraction
         // If bundle.demand.ok is false, we default to 0 but mark source as unresolved
-        const demandIndex = bundle.demand.metrics?.demandIndex ?? 0;
-        const readiness = bundle.demand.metrics?.readiness ?? 0;
-        const spread = bundle.demand.metrics?.spread ?? 0;
-        const trend = bundle.demand.metrics?.trend ?? null;
+        const rawDemandIndex = bundle.demand.metrics?.demandIndex ?? 0;
+        const rawReadiness = bundle.demand.metrics?.readiness ?? 0;
+        const rawSpread = bundle.demand.metrics?.spread ?? 0;
+        const rawTrend = bundle.demand.metrics?.trend ?? null;
         const source = bundle.demand.metrics?.source || "unresolved";
+
+        // Apply presentation calibration to ensure Deep Dive matches dashboard
+        const { getCalibratedDemand, getCalibratedReadiness, getCalibratedSpread, getCalibratedTrend } = await import('./demandBenchmarkCalibration');
+        const demandIndex = getCalibratedDemand(categoryId, rawDemandIndex);
+        const readiness = getCalibratedReadiness(categoryId, rawReadiness);
+        const spread = getCalibratedSpread(categoryId, rawSpread);
+        const trend = getCalibratedTrend(categoryId, rawTrend);
 
         // --- PLUMBING AUDIT LOG ---
         console.log("DEEP DIVE METRIC INTEGRITY CHECK");
