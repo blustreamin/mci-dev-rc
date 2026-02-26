@@ -92,7 +92,7 @@ export const DeepDiveServiceV2 = {
         }
 
         // --- LEGACY PATH (Fallback) ---
-        const demandCtx = `Demand Index: ${demandIndex.toFixed(2)} Mn. Readiness: ${readiness.toFixed(1)}.`;
+        const demandCtx = `Demand Index: ${demandIndex.toFixed(2)} Mn. Readiness: ${readiness.toFixed(1)}/10. Spread: ${spread.toFixed(1)}/10. 5Y Trend: ${trend > 0 ? '+' : ''}${trend.toFixed(1)}%.`;
         
         // Map signals to platform buckets for Assembler
         const signals = bundle.signals.items;
@@ -139,7 +139,7 @@ export const DeepDiveServiceV2 = {
                 demandIndex: demandIndex,
                 readiness: readiness,
                 spread: spread,
-                trend5y: bundle.demand.metrics?.trend || null,
+                trend5y: trend,
                 momentumLabel: sections.momentum?.label || "Unknown",
                 structureLabel: sections.marketShape?.structure || "Unknown"
             },
@@ -196,7 +196,8 @@ export const DeepDiveServiceV2 = {
             Target Region: India (Bharat)
             
             INPUT DATA:
-            1. Demand: Index=${metrics.demandIndexMn} Mn, Readiness=${metrics.readinessScore}/10, Spread=${metrics.spreadScore}/10, Trend=${metrics.trend5yPercent}%.
+            1. Demand: Index=${metrics.demandIndexMn} Mn, Readiness=${metrics.readinessScore}/10, Spread=${metrics.spreadScore}/10, 5Y Trend=${metrics.trend5yPercent}%.
+            CRITICAL: When writing marketStructure bullets, you MUST reference these EXACT numbers. Demand Index is ${metrics.demandIndexMn} Mn. Readiness is ${metrics.readinessScore}/10. Spread is ${metrics.spreadScore}/10. 5Y Trend is ${metrics.trend5yPercent > 0 ? '+' : ''}${metrics.trend5yPercent}%. Do NOT invent or round these numbers.
             2. Anchors: ${anchors}
             3. Config: allowDemandOnly=${MCI_ENABLE_DEMAND_ONLY_DEEPDIVE}
             

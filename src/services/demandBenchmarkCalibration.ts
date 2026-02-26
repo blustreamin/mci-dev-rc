@@ -4,7 +4,7 @@
  * 
  * Benchmark values from certified V3 snapshots (Category Stability Results).
  * These are the deterministic targets computed from full corpus runs.
- * Includes 5Y trend values for Deep Dive Market Structure.
+ * trend5y is the 5-Year Search Trend expressed as a percentage (e.g. 71.3 = +71.3%).
  */
 
 export interface CategoryBenchmark {
@@ -15,22 +15,22 @@ export interface CategoryBenchmark {
 }
 
 export const PRESENTATION_BENCHMARKS: Record<string, CategoryBenchmark> = {
-    'deodorants':       { demandMn: 7.45, readiness: 6.10, spread: 8.30, trend5y: 0.71 },
-    'face-care':        { demandMn: 6.05, readiness: 5.90, spread: 7.90, trend5y: 0.93 },
-    'shampoo':          { demandMn: 4.79, readiness: 6.10, spread: 7.60, trend5y: 0.42 },
-    'soap':             { demandMn: 3.85, readiness: 5.90, spread: 7.30, trend5y: 0.27 },
-    'sexual-wellness':  { demandMn: 3.22, readiness: 9.00, spread: 4.30, trend5y: 0.31 },
-    'shaving':          { demandMn: 2.54, readiness: 6.40, spread: 6.30, trend5y: -0.10 },
-    'fragrance-premium':{ demandMn: 2.48, readiness: 6.10, spread: 5.30, trend5y: 0.66 },
-    'body-lotion':      { demandMn: 2.27, readiness: 6.00, spread: 6.10, trend5y: 0.61 },
-    'hair-styling':     { demandMn: 1.85, readiness: 6.60, spread: 5.90, trend5y: 0.50 },
-    'intimate-hygiene': { demandMn: 1.82, readiness: 6.30, spread: 5.60, trend5y: 0.91 },
-    'beard':            { demandMn: 1.61, readiness: 6.40, spread: 5.20, trend5y: -0.18 },
-    'oral-care':        { demandMn: 1.53, readiness: 6.00, spread: 8.00, trend5y: 0.27 },
-    'hair-colour':      { demandMn: 1.52, readiness: 5.60, spread: 7.10, trend5y: 0.40 },
-    'skincare-spec':    { demandMn: 1.36, readiness: 6.00, spread: 4.90, trend5y: 4.03 },
-    'hair-oil':         { demandMn: 0.90, readiness: 6.30, spread: 6.90, trend5y: 0.39 },
-    'talcum':           { demandMn: 0.58, readiness: 5.30, spread: 5.90, trend5y: -0.10 }
+    'deodorants':       { demandMn: 7.45, readiness: 6.10, spread: 8.30, trend5y: 71.3 },
+    'face-care':        { demandMn: 6.05, readiness: 5.90, spread: 7.90, trend5y: 93.0 },
+    'shampoo':          { demandMn: 4.79, readiness: 6.10, spread: 7.60, trend5y: 42.0 },
+    'soap':             { demandMn: 3.85, readiness: 5.90, spread: 7.30, trend5y: 27.0 },
+    'sexual-wellness':  { demandMn: 3.22, readiness: 9.00, spread: 4.30, trend5y: 31.0 },
+    'shaving':          { demandMn: 2.54, readiness: 6.40, spread: 6.30, trend5y: -10.0 },
+    'fragrance-premium':{ demandMn: 2.48, readiness: 6.10, spread: 5.30, trend5y: 66.0 },
+    'body-lotion':      { demandMn: 2.27, readiness: 6.00, spread: 6.10, trend5y: 61.0 },
+    'hair-styling':     { demandMn: 1.85, readiness: 6.60, spread: 5.90, trend5y: 50.0 },
+    'intimate-hygiene': { demandMn: 1.82, readiness: 6.30, spread: 5.60, trend5y: 91.0 },
+    'beard':            { demandMn: 1.61, readiness: 6.40, spread: 5.20, trend5y: -18.0 },
+    'oral-care':        { demandMn: 1.53, readiness: 6.00, spread: 8.00, trend5y: 27.0 },
+    'hair-colour':      { demandMn: 1.52, readiness: 5.60, spread: 7.10, trend5y: 40.0 },
+    'skincare-spec':    { demandMn: 1.36, readiness: 6.00, spread: 4.90, trend5y: 403.0 },
+    'hair-oil':         { demandMn: 0.90, readiness: 6.30, spread: 6.90, trend5y: 39.0 },
+    'talcum':           { demandMn: 0.58, readiness: 5.30, spread: 5.90, trend5y: -10.0 }
 };
 
 /**
@@ -62,10 +62,11 @@ export function getCalibratedSpread(categoryId: string, rawSpread: number): numb
 }
 
 /**
- * Calibrate trend to match certified benchmark.
+ * Calibrate 5Y trend to match certified benchmark.
+ * Returns trend as a percentage (e.g. 71.3 means +71.3%).
  */
-export function getCalibratedTrend(categoryId: string, rawTrend: number | null): number | null {
+export function getCalibratedTrend(categoryId: string, rawTrend: number | null): number {
     const bench = PRESENTATION_BENCHMARKS[categoryId];
-    if (!bench) return rawTrend;
+    if (!bench) return rawTrend ?? 0;
     return bench.trend5y;
 }

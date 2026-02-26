@@ -10,7 +10,7 @@ You are a Senior Category Intelligence Analyst for the Indian Market ("Men of Bh
 Your task: Synthesize a definitive "Category Deep Dive" using the provided inputs.
 
 INPUTS PROVIDED:
-1. Demand Metrics: Absolute Search Volume (Mn), Readiness Score (1-10), Spread Score (1-10), 5Y Trend.
+1. Demand Metrics: Absolute Search Volume (Mn), Readiness Score (1-10), Spread Score (1-10), 5Y Trend (percentage, e.g. 71.3 means +71.3% growth over 5 years).
 2. Keyword Anchors: Top intent clusters driving the category.
 3. Signal Corpus: Real-world social/content signals (YouTube, Instagram, Reddit, Amazon).
 
@@ -40,9 +40,10 @@ OUTPUT FORMAT (STRICT JSON SINGLE OBJECT):
   "marketStructure": {
     "demandIndex": number,
     "readiness": number,
+    "spread": number,
     "trend": number,
     "structureLabel": "string",
-    "bullets": ["string" (min 10 bullets, analyzing the numbers)]
+    "bullets": ["string" (min 10 bullets, analyzing the numbers — CRITICAL: The first 4 bullets MUST reference the EXACT metric values provided in INPUT DATA. Bullet 1 must cite Demand Index Mn. Bullet 2 must cite Readiness /10. Bullet 3 must cite Spread /10. Bullet 4 must cite the 5Y Trend %. Do NOT round, approximate, or hallucinate different numbers. Use the EXACT values from INPUT DATA.)"]
   },
   "consumerNeeds": {
     "bullets": ["string" (min 12 bullets covering functional & emotional needs)]
@@ -99,7 +100,7 @@ export type DeepDiveV2ContractOutput = {
     verdict: "OK" | "FAIL";
     failCode?: string;
     executiveSummary?: { title: string; opportunityLabel: string; bullets: string[] };
-    marketStructure?: { demandIndex: number; readiness: number; trend: number; structureLabel: string; bullets: string[] };
+    marketStructure?: { demandIndex: number; readiness: number; spread: number; trend: number; structureLabel: string; bullets: string[] };
     consumerNeeds?: { bullets: string[] };
     behavioursRituals?: { bullets: string[] };
     triggersBarriersInfluences?: { bullets: string[] };
