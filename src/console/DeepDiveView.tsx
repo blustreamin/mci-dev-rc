@@ -623,7 +623,21 @@ export const DeepDiveView: React.FC<DeepDiveViewProps> = ({ initialContext }) =>
                                         <div className="text-xs text-slate-600 font-bold border-l-4 border-blue-200 pl-4 py-1 italic">
                                             "{toReactText(result.marketStructure?.structureLabel)}"
                                         </div>
-                                        <Bullets items={result.marketStructure?.bullets || []} />
+                                        {(() => {
+                                            // Patch first 4 bullets to reference exact calibrated metrics
+                                            const rawBullets = result.marketStructure?.bullets || [];
+                                            const m = metrics;
+                                            const trendStr = typeof m.trend === 'number' ? (m.trend > 0 ? '+' : '') + m.trend.toFixed(1) + '%' : '—';
+                                            const metricBullets = [
+                                                `Absolute Demand of ${typeof m.demand === 'number' ? m.demand.toFixed(2) : '—'} Mn confirms ${m.demand && m.demand > 3 ? 'this is a mass-market staple' : m.demand && m.demand > 1 ? 'a mid-scale category with room for growth' : 'a niche but emerging category'}.`,
+                                                `Readiness Score of ${typeof m.readiness === 'number' ? m.readiness.toFixed(1) : '—'}/10 ${m.readiness && m.readiness >= 7 ? 'suggests low barriers to entry; most men in this segment are already buyers' : m.readiness && m.readiness >= 5 ? 'indicates moderate category maturity; awareness exists but conversion needs nudging' : 'signals an early-stage category where education and trial are key'}.`,
+                                                `Spread Score of ${typeof m.spread === 'number' ? m.spread.toFixed(1) : '—'}/10 ${m.spread && m.spread >= 7 ? 'indicates demand is geographically distributed beyond Metros into Tier-2/3 towns' : m.spread && m.spread >= 5 ? 'shows demand is expanding but still concentrated in urban clusters' : 'reveals demand is still Metro-centric with limited Tier-2/3 penetration'}.`,
+                                                `${trendStr} 5Y Trend ${typeof m.trend === 'number' && m.trend > 30 ? 'shows strong structural growth driven by increasing awareness and adoption' : typeof m.trend === 'number' && m.trend > 0 ? 'shows healthy organic growth in the category' : typeof m.trend === 'number' && m.trend < -5 ? 'signals a declining category facing structural headwinds' : 'indicates a stable, mature market with flat search interest'}.`
+                                            ];
+                                            // Keep remaining qualitative bullets from LLM (index 4+)
+                                            const qualBullets = rawBullets.slice(4);
+                                            return <Bullets items={[...metricBullets, ...qualBullets]} />;
+                                        })()}
                                     </div>
                                 </ReportSection>
                             );
