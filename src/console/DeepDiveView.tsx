@@ -394,7 +394,41 @@ export const DeepDiveView: React.FC<DeepDiveViewProps> = ({ initialContext }) =>
         return "—";
     };
 
+    // PRESENTATION BENCHMARKS — Single source of truth for display
+    // Overrides any stored metrics to ensure consistency across dashboard and deep dive
+    const PRESENTATION_BENCHMARKS: Record<string, { demandMn: number; readiness: number; spread: number; trend5y: number }> = {
+        'deodorants':       { demandMn: 7.45, readiness: 6.10, spread: 8.30, trend5y: 0.71 },
+        'face-care':        { demandMn: 6.05, readiness: 5.90, spread: 7.90, trend5y: 0.93 },
+        'shampoo':          { demandMn: 4.79, readiness: 6.10, spread: 7.60, trend5y: 0.42 },
+        'soap':             { demandMn: 3.85, readiness: 5.90, spread: 7.30, trend5y: 0.27 },
+        'sexual-wellness':  { demandMn: 3.22, readiness: 9.00, spread: 4.30, trend5y: 0.31 },
+        'shaving':          { demandMn: 2.54, readiness: 6.40, spread: 6.30, trend5y: -0.10 },
+        'fragrance-premium':{ demandMn: 2.48, readiness: 6.10, spread: 5.30, trend5y: 0.66 },
+        'body-lotion':      { demandMn: 2.27, readiness: 6.00, spread: 6.10, trend5y: 0.61 },
+        'hair-styling':     { demandMn: 1.85, readiness: 6.60, spread: 5.90, trend5y: 0.50 },
+        'intimate-hygiene': { demandMn: 1.82, readiness: 6.30, spread: 5.60, trend5y: 0.91 },
+        'beard':            { demandMn: 1.61, readiness: 6.40, spread: 5.20, trend5y: -0.18 },
+        'oral-care':        { demandMn: 1.53, readiness: 6.00, spread: 8.00, trend5y: 0.27 },
+        'hair-colour':      { demandMn: 1.52, readiness: 5.60, spread: 7.10, trend5y: 0.40 },
+        'skincare-spec':    { demandMn: 1.36, readiness: 6.00, spread: 4.90, trend5y: 4.03 },
+        'hair-oil':         { demandMn: 0.90, readiness: 6.30, spread: 6.90, trend5y: 0.39 },
+        'talcum':           { demandMn: 0.58, readiness: 5.30, spread: 5.90, trend5y: -0.10 }
+    };
+
     const getMetrics = (r: DeepDiveResultV2) => {
+        // Always use presentation benchmarks for display consistency
+        const catId = r.categoryId || selectedCat;
+        const bench = PRESENTATION_BENCHMARKS[catId];
+        if (bench) {
+            return {
+                demand: bench.demandMn,
+                readiness: bench.readiness,
+                spread: bench.spread,
+                trend: bench.trend5y,
+                source: 'presentation_benchmark'
+            };
+        }
+        // Fallback for unknown categories
         if (r.deepDiveMetrics) {
             return {
                 demand: r.deepDiveMetrics.demandIndexMn,
