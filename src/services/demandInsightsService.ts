@@ -44,31 +44,41 @@ export const DemandInsightsService = {
             const resolvedName = categoryName || metrics.category || categoryId.replace(/-/g, ' ').replace(/_/g, ' ');
             
             const prompt = `
-                Act as a Senior Category Analyst for the Indian Market.
-                Generate a strategic "Demand Insight" narrative based on the following computed metrics.
-                Use ONLY provided numbers. If missing, say missing.
+                You are a Senior Category Strategist at a top-tier consulting firm (McKinsey/BCG level).
+                Generate a deep strategic analysis of this consumer category based on search demand metrics.
                 
                 CATEGORY: ${resolvedName}
-                CONTEXT: ${month}
+                ANALYSIS PERIOD: ${month}
                 
-                METRICS:
-                - Demand Index: ${metrics.demand_index_mn.toFixed(2)} Mn Searches
-                - Readiness Score: ${metrics.metric_scores.readiness.toFixed(1)}/10 (Intent Quality)
-                - Spread Score: ${metrics.metric_scores.spread.toFixed(1)}/10 (Market Fragmentation)
-                - 5Y Trend: ${metrics.trend_5y.value_percent}% (${metrics.trend_5y.trend_label})
+                COMPUTED METRICS:
+                - Monthly Search Demand: ${metrics.demand_index_mn.toFixed(2)} Mn searches
+                - Engagement Readiness Score: ${metrics.metric_scores.readiness.toFixed(1)}/10 (how close consumers are to purchase — 10 = actively buying, 1 = just browsing)
+                - Market Spread Score: ${metrics.metric_scores.spread.toFixed(1)}/10 (how distributed demand is across segments — 10 = evenly spread, 1 = concentrated in few areas)
+                - 5-Year Growth Trend: ${metrics.trend_5y.value_percent}% (${metrics.trend_5y.trend_label})
+                - Total Keywords Tracked: ${metrics.totalKeywordsUsedInMetrics || 'N/A'}
+                - Valid Keywords (with volume): ${metrics.eligibleCount || 'N/A'}
+                
+                PROVIDE DEEP ANALYSIS — think like you're presenting to a CMO:
                 
                 OUTPUT SCHEMA (Strict JSON):
                 {
-                    "title": "string (Short, punchy headline summarizing the state)",
-                    "executiveSummary": "string (2-3 sentences max, executive overview)",
-                    "opportunity": "string (Where is the growth headroom?)",
-                    "riskFlag": "string (What is the primary risk or barrier?)",
-                    "breakdown": ["string" (3-4 bullet points analyzing the interplay of demand, readiness, and spread)]
+                    "title": "Compelling strategic headline (e.g., 'Latent Demand Trapped by Low Market Maturity')",
+                    "executiveSummary": "4-5 sentences. Cover: demand size significance, readiness implications, spread analysis, trend trajectory, and one strategic recommendation.",
+                    "opportunity": "2-3 sentences on the PRIMARY growth opportunity. Be specific about which consumer segment, channel, or behavior shift to target.",
+                    "riskFlag": "2-3 sentences on the PRIMARY risk. Quantify if possible using the metrics (e.g., 'Spread of 1.2/10 means top 3 keywords capture 90%+ of volume').",
+                    "breakdown": [
+                        "Demand Volume Analysis: What does ${metrics.demand_index_mn.toFixed(2)} Mn searches tell us about category maturity? (4-5 sentences)",
+                        "Readiness Deep-Dive: Score of ${metrics.metric_scores.readiness.toFixed(1)}/10 — what does this mean for the purchase funnel? What stage are most consumers in? (4-5 sentences)",
+                        "Market Structure: Spread of ${metrics.metric_scores.spread.toFixed(1)}/10 — how concentrated vs fragmented is this market? What does this mean for new entrants? (4-5 sentences)",
+                        "Growth Trajectory: ${metrics.trend_5y.value_percent}% 5Y trend — is this a growing, stable, or declining category? What's driving the trend? (4-5 sentences)",
+                        "Strategic Implications: Given these metrics, what should a brand do in the next 6-12 months? Prioritize 3 specific actions. (4-5 sentences)",
+                        "Competitive Landscape Signal: What do these search patterns suggest about competitive intensity and white space? (3-4 sentences)"
+                    ]
                 }
             `;
 
             const resp = await ai.models.generateContent({
-                model: 'gemini-flash-lite-latest', // Fast & Cheap
+                model: 'gemini-3-pro-preview',
                 contents: prompt,
                 config: { responseMimeType: 'application/json' }
             });

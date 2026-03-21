@@ -156,8 +156,34 @@ export const DemandRunner = {
                 .slice(0, 5)
                 .map(r => r.keyword_text);
             
-            // In Baseline Mode, skip remote fetch for trends.
-            const trendLock = await getDeterministicTrend5y(categoryId, isBaselineMode, topKeywordsForTrend);
+            // Try Gemini-based trend first, fall back to DFS-derived proxy
+            let trendLock = await getDeterministicTrend5y(categoryId, isBaselineMode, topKeywordsForTrend);
+            
+            // If trend is null/0, compute proxy from DFS competition data
+            if (!trendLock.value_percent && eligibleRows.length > 0) {
+                // DFS competition_index ranges 0-100. Higher competition = growing market.
+                // Average competition as a proxy for market momentum.
+                const competitionValues = eligibleRows
+                    .filter(r => r.competition !== undefined && r.competition !== null)
+                    .map(r => Number(r.competition) || 0);
+                
+                if (competitionValues.length > 5) {
+                    const avgCompetition = competitionValues.reduce((s, v) => s + v, 0) / competitionValues.length;
+                    // Map 0-100 competition to -10% to +20% trend proxy
+                    const proxyTrend = ((avgCompetition - 40) / 60) * 20;
+                    const clampedTrend = Math.max(-15, Math.min(25, parseFloat(proxyTrend.toFixed(1))));
+                    
+                    console.log(`[DEMAND_ENGINE][TREND_PROXY] avgCompetition=${avgCompetition.toFixed(1)} proxyTrend=${clampedTrend}% (from ${competitionValues.length} keywords)`);
+                    
+                    trendLock = {
+                        ...trendLock,
+                        value_percent: clampedTrend,
+                        trend_label: clampedTrend > 2 ? 'Growing' : clampedTrend < -2 ? 'Declining' : 'Stable',
+                        source: 'DFS_COMPETITION_PROXY' as any,
+                    };
+                }
+            }
+
             const trendsForCalc = {
                 fiveYearTrendPct: trendLock.value_percent,
                 trendStatus: (trendLock.trend_label || 'UNKNOWN') as any,

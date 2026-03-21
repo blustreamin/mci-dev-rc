@@ -1,0 +1,178 @@
+diff --git a/src/services/categoryGenerationService.ts b/src/services/categoryGenerationService.ts
+index 524eb3b..ea380de 100644
+--- a/src/services/categoryGenerationService.ts
++++ b/src/services/categoryGenerationService.ts
+@@ -63,15 +63,17 @@ Generate JSON:
+ {
+     "category": "<Professional category name>",
+     "consumerDescription": "<2-3 sentences about this category for consumers in ${input.countryName}>",
+-    "anchors": ["<6-10 strategic research pillars>"],
+-    "subCategories": [{"name": "<n>", "anchors": ["<4-8 anchors>"]}],
+-    "defaultKeywords": ["<EXACTLY 150 search keywords>"],
++    "anchors": ["<8-12 strategic research pillars — e.g. Product Quality, Price & Value, Brand Trust, Purchase Channels, Health & Nutrition, Cooking & Usage, Freshness & Storage, Regional Preferences, Premium vs Mass, Online vs Offline>"],
++    "subCategories": [{"name": "<n>", "anchors": ["<4-6 specific anchors>"]}],
++    "defaultKeywords": ["<EXACTLY 200 search keywords>"],
+     "keyBrands": ["<10-20 brands in ${input.countryName}>"]
+ }
+ 
++IMPORTANT: Generate 8-12 subCategories covering distinct research dimensions. NOT 3-4.
++
+ KEYWORD RULES:
+ - Every keyword = a real Google search query people in ${input.countryName} would type.
+-- Mix: 30 head terms (1-2 words), 70 mid-tail (3-4 words), 50 long-tail (5+ words).
++- Mix: 40 head terms (1-2 words), 100 mid-tail (3-4 words), 60 long-tail (5+ words).
+ - Include: brand queries, price queries, "best X", "X vs Y", "how to", "X review", "buy X online".
+ - 80%+ must contain "${input.categoryText}" or a close variant.
+ - Specific to ${input.countryName}. Use local platforms and currency.
+diff --git a/src/services/demandInsightsService.ts b/src/services/demandInsightsService.ts
+index 9285870..8bc44b4 100644
+--- a/src/services/demandInsightsService.ts
++++ b/src/services/demandInsightsService.ts
+@@ -44,31 +44,41 @@ export const DemandInsightsService = {
+             const resolvedName = categoryName || metrics.category || categoryId.replace(/-/g, ' ').replace(/_/g, ' ');
+             
+             const prompt = `
+-                Act as a Senior Category Analyst for the Indian Market.
+-                Generate a strategic "Demand Insight" narrative based on the following computed metrics.
+-                Use ONLY provided numbers. If missing, say missing.
++                You are a Senior Category Strategist at a top-tier consulting firm (McKinsey/BCG level).
++                Generate a deep strategic analysis of this consumer category based on search demand metrics.
+                 
+                 CATEGORY: ${resolvedName}
+-                CONTEXT: ${month}
++                ANALYSIS PERIOD: ${month}
+                 
+-                METRICS:
+-                - Demand Index: ${metrics.demand_index_mn.toFixed(2)} Mn Searches
+-                - Readiness Score: ${metrics.metric_scores.readiness.toFixed(1)}/10 (Intent Quality)
+-                - Spread Score: ${metrics.metric_scores.spread.toFixed(1)}/10 (Market Fragmentation)
+-                - 5Y Trend: ${metrics.trend_5y.value_percent}% (${metrics.trend_5y.trend_label})
++                COMPUTED METRICS:
++                - Monthly Search Demand: ${metrics.demand_index_mn.toFixed(2)} Mn searches
++                - Engagement Readiness Score: ${metrics.metric_scores.readiness.toFixed(1)}/10 (how close consumers are to purchase — 10 = actively buying, 1 = just browsing)
++                - Market Spread Score: ${metrics.metric_scores.spread.toFixed(1)}/10 (how distributed demand is across segments — 10 = evenly spread, 1 = concentrated in few areas)
++                - 5-Year Growth Trend: ${metrics.trend_5y.value_percent}% (${metrics.trend_5y.trend_label})
++                - Total Keywords Tracked: ${metrics.totalKeywordsUsedInMetrics || 'N/A'}
++                - Valid Keywords (with volume): ${metrics.eligibleCount || 'N/A'}
++                
++                PROVIDE DEEP ANALYSIS — think like you're presenting to a CMO:
+                 
+                 OUTPUT SCHEMA (Strict JSON):
+                 {
+-                    "title": "string (Short, punchy headline summarizing the state)",
+-                    "executiveSummary": "string (2-3 sentences max, executive overview)",
+-                    "opportunity": "string (Where is the growth headroom?)",
+-                    "riskFlag": "string (What is the primary risk or barrier?)",
+-                    "breakdown": ["string" (3-4 bullet points analyzing the interplay of demand, readiness, and spread)]
++                    "title": "Compelling strategic headline (e.g., 'Latent Demand Trapped by Low Market Maturity')",
++                    "executiveSummary": "4-5 sentences. Cover: demand size significance, readiness implications, spread analysis, trend trajectory, and one strategic recommendation.",
++                    "opportunity": "2-3 sentences on the PRIMARY growth opportunity. Be specific about which consumer segment, channel, or behavior shift to target.",
++                    "riskFlag": "2-3 sentences on the PRIMARY risk. Quantify if possible using the metrics (e.g., 'Spread of 1.2/10 means top 3 keywords capture 90%+ of volume').",
++                    "breakdown": [
++                        "Demand Volume Analysis: What does ${metrics.demand_index_mn.toFixed(2)} Mn searches tell us about category maturity? (4-5 sentences)",
++                        "Readiness Deep-Dive: Score of ${metrics.metric_scores.readiness.toFixed(1)}/10 — what does this mean for the purchase funnel? What stage are most consumers in? (4-5 sentences)",
++                        "Market Structure: Spread of ${metrics.metric_scores.spread.toFixed(1)}/10 — how concentrated vs fragmented is this market? What does this mean for new entrants? (4-5 sentences)",
++                        "Growth Trajectory: ${metrics.trend_5y.value_percent}% 5Y trend — is this a growing, stable, or declining category? What's driving the trend? (4-5 sentences)",
++                        "Strategic Implications: Given these metrics, what should a brand do in the next 6-12 months? Prioritize 3 specific actions. (4-5 sentences)",
++                        "Competitive Landscape Signal: What do these search patterns suggest about competitive intensity and white space? (3-4 sentences)"
++                    ]
+                 }
+             `;
+ 
+             const resp = await ai.models.generateContent({
+-                model: 'gemini-flash-lite-latest', // Fast & Cheap
++                model: 'gemini-3-pro-preview',
+                 contents: prompt,
+                 config: { responseMimeType: 'application/json' }
+             });
+diff --git a/src/services/demandRunner.ts b/src/services/demandRunner.ts
+index aaead7b..d80f9e9 100644
+--- a/src/services/demandRunner.ts
++++ b/src/services/demandRunner.ts
+@@ -156,8 +156,34 @@ export const DemandRunner = {
+                 .slice(0, 5)
+                 .map(r => r.keyword_text);
+             
+-            // In Baseline Mode, skip remote fetch for trends.
+-            const trendLock = await getDeterministicTrend5y(categoryId, isBaselineMode, topKeywordsForTrend);
++            // Try Gemini-based trend first, fall back to DFS-derived proxy
++            let trendLock = await getDeterministicTrend5y(categoryId, isBaselineMode, topKeywordsForTrend);
++            
++            // If trend is null/0, compute proxy from DFS competition data
++            if (!trendLock.value_percent && eligibleRows.length > 0) {
++                // DFS competition_index ranges 0-100. Higher competition = growing market.
++                // Average competition as a proxy for market momentum.
++                const competitionValues = eligibleRows
++                    .filter(r => r.competition !== undefined && r.competition !== null)
++                    .map(r => Number(r.competition) || 0);
++                
++                if (competitionValues.length > 5) {
++                    const avgCompetition = competitionValues.reduce((s, v) => s + v, 0) / competitionValues.length;
++                    // Map 0-100 competition to -10% to +20% trend proxy
++                    const proxyTrend = ((avgCompetition - 40) / 60) * 20;
++                    const clampedTrend = Math.max(-15, Math.min(25, parseFloat(proxyTrend.toFixed(1))));
++                    
++                    console.log(`[DEMAND_ENGINE][TREND_PROXY] avgCompetition=${avgCompetition.toFixed(1)} proxyTrend=${clampedTrend}% (from ${competitionValues.length} keywords)`);
++                    
++                    trendLock = {
++                        ...trendLock,
++                        value_percent: clampedTrend,
++                        trend_label: clampedTrend > 2 ? 'Growing' : clampedTrend < -2 ? 'Declining' : 'Stable',
++                        source: 'DFS_COMPETITION_PROXY' as any,
++                    };
++                }
++            }
++
+             const trendsForCalc = {
+                 fiveYearTrendPct: trendLock.value_percent,
+                 trendStatus: (trendLock.trend_label || 'UNKNOWN') as any,
+diff --git a/src/services/projectCorpusBuilder.ts b/src/services/projectCorpusBuilder.ts
+index e51d96b..11952ba 100644
+--- a/src/services/projectCorpusBuilder.ts
++++ b/src/services/projectCorpusBuilder.ts
+@@ -352,13 +352,23 @@ export const ProjectCorpusBuilder = {
+                 processedKeywords: snapshotRows.length,
+             });
+ 
++            // --- 5b. FILTER: Minimize zero-volume noise ---
++            // Keep all VALID rows, limit ZERO to max 20% of total, drop UNVERIFIED
++            const validRows = snapshotRows.filter(r => r.status === 'VALID');
++            const zeroRows = snapshotRows.filter(r => r.status === 'ZERO');
++            const maxZero = Math.max(20, Math.round(validRows.length * 0.25));
++            const keptZero = zeroRows.slice(0, maxZero);
++            const finalRows = [...validRows, ...keptZero];
++            
++            console.log(`[CorpusBuilder] Corpus filter: ${validRows.length} valid + ${keptZero.length}/${zeroRows.length} zero kept (dropped ${snapshotRows.length - finalRows.length} low-value rows)`);
++
+             // --- 6. SAVE TO PLATFORMDB ---
+-            emit('SAVING', `Saving ${snapshotRows.length} rows to IndexedDB...`);
++            emit('SAVING', `Saving ${finalRows.length} rows to IndexedDB (${validRows.length} valid)...`);
+ 
+-            const saved = await PlatformDB.saveCorpus(categoryId, snapshotRows);
++            const saved = await PlatformDB.saveCorpus(categoryId, finalRows);
+             if (!saved) {
+                 emit('FAILED', 'Failed to save corpus to IndexedDB');
+-                return { ok: false, categoryId, totalRows: snapshotRows.length, validRows: progress.validKeywords, zeroRows: progress.zeroKeywords, discoveredCount: discoveredRows.length, elapsedMs: Date.now() - startTime, error: 'SAVE_FAILED' };
++                return { ok: false, categoryId, totalRows: finalRows.length, validRows: validRows.length, zeroRows: keptZero.length, discoveredCount: discoveredRows.length, elapsedMs: Date.now() - startTime, error: 'SAVE_FAILED' };
+             }
+ 
+             // Also save the project + category to PlatformDB for persistence
+@@ -366,14 +376,14 @@ export const ProjectCorpusBuilder = {
+             await PlatformDB.saveCategory(categoryId, gen);
+ 
+             const elapsed = Date.now() - startTime;
+-            emit('DONE', `Corpus built: ${snapshotRows.length} keywords (${progress.validKeywords} valid) in ${(elapsed / 1000).toFixed(1)}s`);
++            emit('DONE', `Corpus built: ${finalRows.length} keywords (${validRows.length} valid) in ${(elapsed / 1000).toFixed(1)}s`);
+ 
+             return {
+                 ok: true,
+                 categoryId,
+-                totalRows: snapshotRows.length,
+-                validRows: progress.validKeywords,
+-                zeroRows: progress.zeroKeywords,
++                totalRows: finalRows.length,
++                validRows: validRows.length,
++                zeroRows: keptZero.length,
+                 discoveredCount: discoveredRows.length,
+                 elapsedMs: elapsed,
+             };

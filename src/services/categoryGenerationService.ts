@@ -63,15 +63,17 @@ Generate JSON:
 {
     "category": "<Professional category name>",
     "consumerDescription": "<2-3 sentences about this category for consumers in ${input.countryName}>",
-    "anchors": ["<6-10 strategic research pillars>"],
-    "subCategories": [{"name": "<n>", "anchors": ["<4-8 anchors>"]}],
-    "defaultKeywords": ["<EXACTLY 150 search keywords>"],
+    "anchors": ["<8-12 strategic research pillars — e.g. Product Quality, Price & Value, Brand Trust, Purchase Channels, Health & Nutrition, Cooking & Usage, Freshness & Storage, Regional Preferences, Premium vs Mass, Online vs Offline>"],
+    "subCategories": [{"name": "<n>", "anchors": ["<4-6 specific anchors>"]}],
+    "defaultKeywords": ["<EXACTLY 200 search keywords>"],
     "keyBrands": ["<10-20 brands in ${input.countryName}>"]
 }
 
+IMPORTANT: Generate 8-12 subCategories covering distinct research dimensions. NOT 3-4.
+
 KEYWORD RULES:
 - Every keyword = a real Google search query people in ${input.countryName} would type.
-- Mix: 30 head terms (1-2 words), 70 mid-tail (3-4 words), 50 long-tail (5+ words).
+- Mix: 40 head terms (1-2 words), 100 mid-tail (3-4 words), 60 long-tail (5+ words).
 - Include: brand queries, price queries, "best X", "X vs Y", "how to", "X review", "buy X online".
 - 80%+ must contain "${input.categoryText}" or a close variant.
 - Specific to ${input.countryName}. Use local platforms and currency.

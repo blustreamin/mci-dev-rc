@@ -352,13 +352,23 @@ export const ProjectCorpusBuilder = {
                 processedKeywords: snapshotRows.length,
             });
 
-            // --- 6. SAVE TO PLATFORMDB ---
-            emit('SAVING', `Saving ${snapshotRows.length} rows to IndexedDB...`);
+            // --- 5b. FILTER: Minimize zero-volume noise ---
+            // Keep all VALID rows, limit ZERO to max 20% of total, drop UNVERIFIED
+            const validRows = snapshotRows.filter(r => r.status === 'VALID');
+            const zeroRows = snapshotRows.filter(r => r.status === 'ZERO');
+            const maxZero = Math.max(20, Math.round(validRows.length * 0.25));
+            const keptZero = zeroRows.slice(0, maxZero);
+            const finalRows = [...validRows, ...keptZero];
+            
+            console.log(`[CorpusBuilder] Corpus filter: ${validRows.length} valid + ${keptZero.length}/${zeroRows.length} zero kept (dropped ${snapshotRows.length - finalRows.length} low-value rows)`);
 
-            const saved = await PlatformDB.saveCorpus(categoryId, snapshotRows);
+            // --- 6. SAVE TO PLATFORMDB ---
+            emit('SAVING', `Saving ${finalRows.length} rows to IndexedDB (${validRows.length} valid)...`);
+
+            const saved = await PlatformDB.saveCorpus(categoryId, finalRows);
             if (!saved) {
                 emit('FAILED', 'Failed to save corpus to IndexedDB');
-                return { ok: false, categoryId, totalRows: snapshotRows.length, validRows: progress.validKeywords, zeroRows: progress.zeroKeywords, discoveredCount: discoveredRows.length, elapsedMs: Date.now() - startTime, error: 'SAVE_FAILED' };
+                return { ok: false, categoryId, totalRows: finalRows.length, validRows: validRows.length, zeroRows: keptZero.length, discoveredCount: discoveredRows.length, elapsedMs: Date.now() - startTime, error: 'SAVE_FAILED' };
             }
 
             // Also save the project + category to PlatformDB for persistence
@@ -366,14 +376,14 @@ export const ProjectCorpusBuilder = {
             await PlatformDB.saveCategory(categoryId, gen);
 
             const elapsed = Date.now() - startTime;
-            emit('DONE', `Corpus built: ${snapshotRows.length} keywords (${progress.validKeywords} valid) in ${(elapsed / 1000).toFixed(1)}s`);
+            emit('DONE', `Corpus built: ${finalRows.length} keywords (${validRows.length} valid) in ${(elapsed / 1000).toFixed(1)}s`);
 
             return {
                 ok: true,
                 categoryId,
-                totalRows: snapshotRows.length,
-                validRows: progress.validKeywords,
-                zeroRows: progress.zeroKeywords,
+                totalRows: finalRows.length,
+                validRows: validRows.length,
+                zeroRows: keptZero.length,
                 discoveredCount: discoveredRows.length,
                 elapsedMs: elapsed,
             };
