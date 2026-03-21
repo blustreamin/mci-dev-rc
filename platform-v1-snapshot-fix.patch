@@ -1,0 +1,112 @@
+From 2e4776d6ab0a915d9d9795eaeea5dd6cf0c83b96 Mon Sep 17 00:00:00 2001
+From: Venkat <venkat@blustream.in>
+Date: Sat, 21 Mar 2026 04:50:53 +0000
+Subject: [PATCH] fix: bypass snapshot gate for dynamic project categories
+
+In project mode, strategy generation skips Firestore snapshot resolution
+and runs Gemini directly. Snapshot pipeline only applies to legacy
+CORE_CATEGORIES that have pre-existing hydrated/certified data.
+---
+ src/console/StrategyView.tsx | 73 +++++++++++++++++++-----------------
+ 1 file changed, 38 insertions(+), 35 deletions(-)
+
+diff --git a/src/console/StrategyView.tsx b/src/console/StrategyView.tsx
+index b198732..69ca1ca 100644
+--- a/src/console/StrategyView.tsx
++++ b/src/console/StrategyView.tsx
+@@ -210,7 +210,7 @@ export const StrategyView: React.FC<StrategyViewProps> = ({
+         const traceId = `STRAT_GEN_${Date.now()}`;
+         const ids = selectedCategories.map(c => c.id);
+         
+-        console.log(`[STRATEGY_UI][CLICK] ${ids.length}`);
++        console.log(`[STRATEGY_UI][CLICK] ${ids.length} isProjectMode=${isProjectMode}`);
+         
+         if (ids.length === 0) {
+             alert("No categories selected.");
+@@ -218,46 +218,49 @@ export const StrategyView: React.FC<StrategyViewProps> = ({
+         }
+ 
+         setIsGenerating(true);
+-        setGenStatus('Resolving snapshots...');
+ 
+         try {
+-            // 1. Verify Snapshot Availability for ALL selected
+-            const validIds: string[] = [];
+-            
+-            for (const cat of selectedCategories) {
+-                console.log(`[STRATEGY_UI][CAT_START] ${cat.id}`);
+-                const resolution = await SnapshotResolver.resolveActiveSnapshot(cat.id, 'IN', 'en');
++            if (isProjectMode) {
++                // PROJECT MODE: Skip snapshot resolution, run directly
++                setGenStatus(`Generating for ${ids.length} categories...`);
++                onRun(ids);
+                 
+-                if (!resolution.ok) {
+-                    console.error(`[STRATEGY_UI] Snapshot Missing for ${cat.id}`);
+-                    continue; 
+-                }
++                setTimeout(() => {
++                    setGenStatus('Outputs Queued');
++                    setIsGenerating(false);
++                }, 2000);
++            } else {
++                // LEGACY MODE: Resolve snapshots first (original behaviour)
++                setGenStatus('Resolving snapshots...');
++                const validIds: string[] = [];
+                 
+-                // Allow VALIDATED_LITE and CERTIFIED_LITE
+-                // We're permissive here because the Runner will attempt self-heal if it finds 0 valid keywords
+-                validIds.push(cat.id);
+-                console.log(`[STRATEGY_UI][CAT_DONE] ${cat.id}`);
+-            }
+-
+-            if (validIds.length === 0) {
+-                alert("No valid snapshots found. Please Hydrate & Validate in Integrity Console.");
+-                setIsGenerating(false);
+-                return;
+-            }
++                for (const cat of selectedCategories) {
++                    console.log(`[STRATEGY_UI][CAT_START] ${cat.id}`);
++                    const resolution = await SnapshotResolver.resolveActiveSnapshot(cat.id, 'IN', 'en');
++                    
++                    if (!resolution.ok) {
++                        console.error(`[STRATEGY_UI] Snapshot Missing for ${cat.id}`);
++                        continue; 
++                    }
++                    
++                    validIds.push(cat.id);
++                    console.log(`[STRATEGY_UI][CAT_DONE] ${cat.id}`);
++                }
+ 
+-            // 2. Trigger Run
+-            setGenStatus(`Generating for ${validIds.length} categories...`);
+-            
+-            // Pass IDs to the parent runner which orchestrates the service calls
+-            onRun(validIds); 
+-            
+-            console.log(`[STRATEGY_UI][DONE] ${validIds.length}`);
++                if (validIds.length === 0) {
++                    alert("No valid snapshots found. Please Hydrate & Validate in Integrity Console.");
++                    setIsGenerating(false);
++                    return;
++                }
+ 
+-            // 3. UI Feedback (Optimistic)
+-            setTimeout(() => {
+-                setGenStatus('Outputs Queued');
+-                setIsGenerating(false);
+-            }, 2000);
++                setGenStatus(`Generating for ${validIds.length} categories...`);
++                onRun(validIds); 
++                
++                setTimeout(() => {
++                    setGenStatus('Outputs Queued');
++                    setIsGenerating(false);
++                }, 2000);
++            }
+ 
+         } catch (e: any) {
+              console.error("[STRATEGY_UI][ERR] generate_output_failed", { traceId, error: e.message });
+-- 
+2.43.0
+
