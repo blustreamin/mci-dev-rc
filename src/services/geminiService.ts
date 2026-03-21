@@ -64,6 +64,21 @@ function safeParseJSON(input: string): any {
   try { return JSON.parse(cleaned); } catch (e) { return {}; }
 }
 
+// Intent inference for dynamic project keywords
+function inferIntentFromKeyword(keyword: string): string {
+    const norm = keyword.toLowerCase();
+    const INTENT_MAP: Record<string, string[]> = {
+        Decision: ["buy", "price", "coupon", "discount", "near me", "order", "best under", "amazon", "flipkart", "store", "deal", "cost", "online", "where to"],
+        Consideration: ["review", "vs", "comparison", "top", "best", "which", "brand", "recommended", "list", "rating", "worth"],
+        Care: ["side effects", "sensitive", "irritation", "problem", "repair", "treatment", "safe", "harmful", "allergy", "quality"],
+        Discovery: ["what is", "how to", "benefits", "guide", "tips", "routine", "meaning", "uses", "ideas", "types", "difference"]
+    };
+    for (const [intent, tokens] of Object.entries(INTENT_MAP)) {
+        if (tokens.some(t => norm.includes(t))) return intent;
+    }
+    return "Discovery";
+}
+
 // Map the new internal incremental result format to the legacy PreSweepData structure
 function mapIncrementalToPreSweep(
     result: ConsumerNeedsResult['sections'],
@@ -127,26 +142,65 @@ export async function runPreSweepIntelligence(
     if (onUpdate) onUpdate('Calling Model', 1, "Initializing Analysis...");
     logFn({ timestamp: new Date().toISOString(), stage: 'Strategy', category: category.category, step: 'START', attempt: 1, status: 'Running', durationMs: 0, message: `[CNA][START] category=${category.id}` });
     
-    // 1. Resolve Snapshot
-    // Use Corpus Resolver logic to find the best source
-    const corpusRes = await SnapshotResolver.resolveActiveSnapshot(category.id, 'IN', 'en');
-    const corpusSnapshotId = corpusRes.snapshot?.snapshot_id;
+    // --- PROJECT MODE DETECTION ---
+    // If the category has defaultKeywords and its coverageNotes contains "AI-generated",
+    // it's a dynamic project category — bypass Firestore corpus entirely.
+    const isProjectCategory = category.coverageNotes?.includes('AI-generated') && category.defaultKeywords.length > 0;
+    
+    let chunks: any[][] = [];
+    let totalRows = 0;
+    let corpusSnapshotId = '';
 
-    if (!corpusSnapshotId) {
-        return { ok: false, error: "CRITICAL: Could not resolve a valid Corpus Snapshot ID for analysis." };
+    if (isProjectCategory) {
+        // BUILD SYNTHETIC CORPUS from AI-generated keywords
+        corpusSnapshotId = `proj_${category.id}_${Date.now()}`;
+        logFn({ timestamp: new Date().toISOString(), stage: 'Strategy', category: category.category, step: 'LOAD', attempt: 1, status: 'Running', durationMs: 0, message: `[PROJECT_MODE] Building corpus from ${category.defaultKeywords.length} AI-generated keywords...` });
+        
+        const syntheticRows = category.defaultKeywords.map((kw, idx) => {
+            // Assign keywords to anchors round-robin
+            const anchorIdx = idx % category.anchors.length;
+            const anchor = category.anchors[anchorIdx];
+            return {
+                keyword_id: `gen_${idx}`,
+                keyword: kw,
+                volume: 0, // Will be filled by demand sweep later
+                anchor_id: anchor,
+                intent_bucket: inferIntentFromKeyword(kw),
+                status: 'active',
+                active: true
+            };
+        });
+        
+        // Chunk them (same as the original pipeline)
+        const chunkSize = 120;
+        for (let i = 0; i < syntheticRows.length; i += chunkSize) {
+            chunks.push(syntheticRows.slice(i, i + chunkSize));
+        }
+        totalRows = syntheticRows.length;
+        
+        logFn({ timestamp: new Date().toISOString(), stage: 'Strategy', category: category.category, step: 'LOAD', attempt: 1, status: 'Success', durationMs: 0, message: `[PROJECT_MODE] Corpus built: ${totalRows} keywords in ${chunks.length} chunks.` });
+    } else {
+        // LEGACY MODE: Resolve from Firestore corpus
+        const corpusRes = await SnapshotResolver.resolveActiveSnapshot(category.id, 'IN', 'en');
+        corpusSnapshotId = corpusRes.snapshot?.snapshot_id || '';
+
+        if (!corpusSnapshotId) {
+            return { ok: false, error: "CRITICAL: Could not resolve a valid Corpus Snapshot ID for analysis." };
+        }
+
+        logFn({ timestamp: new Date().toISOString(), stage: 'Strategy', category: category.category, step: 'LOAD', attempt: 1, status: 'Running', durationMs: 0, message: 'Loading corpus in chunks...' });
+
+        const loaded = await loadSnapshotRowsLiteChunked(
+            category.id, 
+            corpusSnapshotId, 
+            { chunkSize: 120, maxChunks: 8, seed: runId },
+            { onlyValid: true, onlyActive: true }
+        );
+        chunks = loaded.chunks;
+        totalRows = loaded.totalRows;
+
+        logFn({ timestamp: new Date().toISOString(), stage: 'Strategy', category: category.category, step: 'LOAD', attempt: 1, status: 'Success', durationMs: 0, message: `Loaded ${totalRows} rows in ${chunks.length} chunks.` });
     }
-
-    // 2. Load Rows via Chunk Reader (Incremental)
-    logFn({ timestamp: new Date().toISOString(), stage: 'Strategy', category: category.category, step: 'LOAD', attempt: 1, status: 'Running', durationMs: 0, message: 'Loading corpus in chunks...' });
-
-    const { chunks, totalRows } = await loadSnapshotRowsLiteChunked(
-        category.id, 
-        corpusSnapshotId, 
-        { chunkSize: 120, maxChunks: 8, seed: runId },
-        { onlyValid: true, onlyActive: true }
-    );
-
-    logFn({ timestamp: new Date().toISOString(), stage: 'Strategy', category: category.category, step: 'LOAD', attempt: 1, status: 'Success', durationMs: 0, message: `Loaded ${totalRows} rows in ${chunks.length} chunks.` });
 
     // 3. Initialize Synthesis State
     let synthesisState: ConsumerNeedsResult['sections'] = {
