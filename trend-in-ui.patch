@@ -1,0 +1,66 @@
+diff --git a/src/console/CorpusInspectorView.tsx b/src/console/CorpusInspectorView.tsx
+index 86d1850..0f4402e 100644
+--- a/src/console/CorpusInspectorView.tsx
++++ b/src/console/CorpusInspectorView.tsx
+@@ -179,6 +179,7 @@ const KeywordTable: React.FC<{ rows: SnapshotKeywordRow[]; search: string }> = (
+                             <th className="px-4 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">Anchor</th>
+                             <th className="px-4 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">Intent</th>
+                             <th className="px-4 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Volume</th>
++                            <th className="px-4 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Trend</th>
+                             <th className="px-4 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Status</th>
+                         </tr>
+                     </thead>
+@@ -193,6 +194,13 @@ const KeywordTable: React.FC<{ rows: SnapshotKeywordRow[]; search: string }> = (
+                                 <td className="px-4 py-3 text-right font-mono text-xs font-bold text-slate-700">
+                                     {(r.volume || 0) > 0 ? fmt(r.volume || 0) : '—'}
+                                 </td>
++                                <td className="px-4 py-3 text-right">
++                                    {r.demandScore !== undefined && r.demandScore !== null && Number.isFinite(r.demandScore) ? (
++                                        <span className={`text-[10px] font-bold ${r.demandScore > 2 ? 'text-emerald-600' : r.demandScore < -2 ? 'text-red-500' : 'text-slate-400'}`}>
++                                            {r.demandScore > 0 ? '+' : ''}{r.demandScore.toFixed(0)}%
++                                        </span>
++                                    ) : <span className="text-slate-300">—</span>}
++                                </td>
+                                 <td className="px-4 py-3 text-right">{statusBadge(r.status || 'UNVERIFIED')}</td>
+                             </tr>
+                         ))}
+@@ -234,7 +242,18 @@ const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
+         const totalVolume = rows.reduce((s, r) => s + (r.volume || 0), 0);
+         const avgVolume = valid > 0 ? Math.round(totalVolume / valid) : 0;
+         const topKeyword = rows.filter(r => (r.volume || 0) > 0).sort((a, b) => (b.volume || 0) - (a.volume || 0))[0];
+-        return { total, valid, zero, unverified, totalVolume, avgVolume, topKeyword };
++        
++        // Corpus-level trend from per-keyword demandScore (DFS monthly_searches trend)
++        const kwWithTrend = rows.filter(r => r.demandScore !== undefined && r.demandScore !== null && Number.isFinite(r.demandScore) && (r.volume || 0) > 0);
++        let corpusTrend: number | null = null;
++        let trendKeywords = 0;
++        if (kwWithTrend.length >= 3) {
++            const totalVol = kwWithTrend.reduce((s, r) => s + (r.volume || 1), 0);
++            corpusTrend = parseFloat((kwWithTrend.reduce((s, r) => s + ((r.demandScore || 0) * (r.volume || 1)), 0) / totalVol).toFixed(1));
++            trendKeywords = kwWithTrend.length;
++        }
++        
++        return { total, valid, zero, unverified, totalVolume, avgVolume, topKeyword, corpusTrend, trendKeywords };
+     }, [rows]);
+ 
+     // Load data
+@@ -363,11 +382,18 @@ const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
+                 {/* Stats Row */}
+                 {rows.length > 0 && (
+                     <>
+-                        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
++                        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+                             <StatCard label="Total Keywords" value={stats.total} icon={<Hash className="w-4 h-4 text-slate-400" />} />
+                             <StatCard label="DFS Verified" value={stats.valid} sub={pct(stats.valid, stats.total)} color="#059669" icon={<CheckCircle2 className="w-4 h-4 text-emerald-500" />} />
+                             <StatCard label="Zero Volume" value={stats.zero} sub={pct(stats.zero, stats.total)} color="#94a3b8" icon={<AlertTriangle className="w-4 h-4 text-slate-400" />} />
+                             <StatCard label="Total Volume" value={fmt(stats.totalVolume)} sub={`Avg: ${fmt(stats.avgVolume)}/kw`} color="#4f46e5" icon={<BarChart3 className="w-4 h-4 text-indigo-500" />} />
++                            <StatCard 
++                                label="Corpus Trend" 
++                                value={stats.corpusTrend !== null ? `${stats.corpusTrend > 0 ? '+' : ''}${stats.corpusTrend}%` : '—'} 
++                                sub={stats.trendKeywords > 0 ? `From ${stats.trendKeywords} keywords with monthly data` : 'Rebuild corpus for trend data'} 
++                                color={stats.corpusTrend !== null ? (stats.corpusTrend > 2 ? '#059669' : stats.corpusTrend < -2 ? '#dc2626' : '#6b7280') : '#94a3b8'} 
++                                icon={<TrendingUp className="w-4 h-4" style={{ color: stats.corpusTrend !== null && stats.corpusTrend > 0 ? '#059669' : '#dc2626' }} />} 
++                            />
+                             <StatCard 
+                                 label="Top Keyword" 
+                                 value={stats.topKeyword ? fmt(stats.topKeyword.volume || 0) : '—'} 
