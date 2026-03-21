@@ -10,7 +10,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { 
-    ArrowRight, ArrowLeft, Sparkles, Globe, Loader2, Check, AlertTriangle, 
+    ArrowRight, ArrowLeft, Sparkles, Globe, Loader2, Check, AlertTriangle, CheckCircle2,
     Search, ChevronDown, X, BarChart3, Tag, Building2, MapPin, Languages
 } from 'lucide-react';
 import { 
@@ -184,17 +184,21 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
                 <p className="text-slate-500 text-lg">Define what you want to research and where. Our AI will set up the intelligence framework.</p>
             </div>
 
-            {/* Step Indicator */}
+            {/* Progress Indicator */}
             <div className="flex items-center gap-3 mb-10">
-                <div className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${step === 1 ? 'bg-blue-600 text-white shadow-lg' : 'bg-blue-50 text-blue-600'}`}>
+                <div className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-blue-600 text-white shadow-lg">
                     <Building2 className="w-4 h-4" />
-                    <span>1. Define Market</span>
+                    <span>Define Market & Geography</span>
                 </div>
-                <div className="w-8 h-px bg-slate-300" />
-                <div className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${step === 2 ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-100 text-slate-400'}`}>
-                    <Globe className="w-4 h-4" />
-                    <span>2. Geography</span>
-                </div>
+                {generatedCategory && (
+                    <>
+                        <div className="w-8 h-px bg-emerald-300" />
+                        <div className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-emerald-50 text-emerald-700">
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span>Framework Generated</span>
+                        </div>
+                    </>
+                )}
             </div>
 
             {/* ============ STEP 1: MARKET DEFINITION ============ */}
@@ -243,6 +247,72 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
                         </div>
                         <p className="mt-2 text-xs text-slate-400">Be specific. Include the product type, positioning (premium/mass), or target consumer if relevant.</p>
                     </div>
+
+                    {/* Geography — inline on Step 1 */}
+                    {selectedIndustry && categoryText.trim() && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {/* Country */}
+                            <div>
+                                <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-3">
+                                    <MapPin className="w-3 h-3 inline mr-1" /> Country / Market
+                                </label>
+                                <div className="relative">
+                                    <button
+                                        onClick={() => setShowCountryDropdown(!showCountryDropdown)}
+                                        className="w-full flex items-center justify-between p-4 border-2 border-slate-200 rounded-xl bg-white hover:border-slate-300 transition-colors text-left"
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <span className="text-2xl">{selectedCountry.flag}</span>
+                                            <div>
+                                                <p className="font-bold text-[#0F172A]">{selectedCountry.name}</p>
+                                                <p className="text-xs text-slate-400">{selectedCountry.code} · {selectedCountry.locationCode}</p>
+                                            </div>
+                                        </div>
+                                        <ChevronDown className={`w-5 h-5 text-slate-400 transition-transform ${showCountryDropdown ? 'rotate-180' : ''}`} />
+                                    </button>
+                                    {showCountryDropdown && (
+                                        <div className="absolute top-full left-0 right-0 mt-2 bg-white border-2 border-slate-200 rounded-xl shadow-xl z-50 max-h-60 overflow-y-auto">
+                                            <div className="p-2 border-b border-slate-100 sticky top-0 bg-white">
+                                                <input type="text" value={countrySearch} onChange={e => setCountrySearch(e.target.value)} placeholder="Search countries..." className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" autoFocus />
+                                            </div>
+                                            {filteredCountries.map(c => (
+                                                <button key={c.code} onClick={() => handleCountrySelect(c)} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-blue-50 text-left transition-colors">
+                                                    <span className="text-lg">{c.flag}</span>
+                                                    <span className="font-bold text-sm text-slate-800">{c.name}</span>
+                                                    <span className="text-xs text-slate-400 ml-auto">{c.code}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                            {/* Languages */}
+                            <div>
+                                <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-3">
+                                    <Languages className="w-3 h-3 inline mr-1" /> Research Languages
+                                </label>
+                                <div className="flex flex-wrap gap-2">
+                                    {selectedCountry.languages.map(lang => {
+                                        const isSelected = selectedLanguages.has(lang.code);
+                                        return (
+                                            <button key={lang.code} onClick={() => {
+                                                setSelectedLanguages(prev => {
+                                                    const next = new Set(prev);
+                                                    if (isSelected && next.size > 1) next.delete(lang.code);
+                                                    else next.add(lang.code);
+                                                    return next;
+                                                });
+                                            }} className={`px-4 py-3 rounded-xl border-2 font-bold text-sm transition-all ${isSelected ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-sm' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'}`}>
+                                                {isSelected && <span className="mr-1">✓</span>}{lang.name}
+                                                {lang.code === selectedCountry.defaultLanguage && <span className="ml-1 text-[9px] text-slate-400">Primary</span>}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                                <p className="mt-2 text-[10px] text-slate-400">Select all languages relevant to your research. Keywords generated across selected languages.</p>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Generate Button */}
                     {selectedIndustry && categoryText.trim() && !generatedCategory && (
@@ -536,33 +606,12 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
             )}
 
             {/* ============ BOTTOM BAR ============ */}
-            <div className="fixed bottom-0 left-0 right-0 p-4 bg-white/90 backdrop-blur-md border-t border-slate-200 flex justify-between items-center z-40 shadow-[0_-4px_12px_rgba(0,0,0,0.05)]">
-                <div>
-                    {step === 2 && (
-                        <button
-                            onClick={() => setStep(1)}
-                            className="flex items-center gap-2 text-slate-500 hover:text-slate-700 font-bold text-sm"
-                        >
-                            <ArrowLeft className="w-4 h-4" /> Back to Market
-                        </button>
-                    )}
-                </div>
-                
+            <div className="fixed bottom-0 left-0 right-0 p-4 bg-white/90 backdrop-blur-md border-t border-slate-200 flex justify-end items-center z-40 shadow-[0_-4px_12px_rgba(0,0,0,0.05)]">
                 <div className="flex items-center gap-4">
-                    {step === 1 && generatedCategory && (
-                        <button
-                            onClick={() => setStep(2)}
-                            className="bg-blue-600 text-white px-8 py-3 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-blue-700 flex items-center gap-2 shadow-lg transition-all active:scale-95"
-                        >
-                            Next: Geography <ArrowRight className="w-4 h-4" />
-                        </button>
-                    )}
-                    
-                    {step === 2 && (
+                    {generatedCategory && (
                         <button
                             onClick={handleProceed}
-                            disabled={!generatedCategory}
-                            className="bg-gradient-to-r from-blue-600 to-teal-500 text-white px-8 py-3 rounded-xl font-black text-xs uppercase tracking-widest hover:opacity-90 disabled:opacity-50 flex items-center gap-2 shadow-lg transition-all active:scale-95"
+                            className="bg-gradient-to-r from-blue-600 to-teal-500 text-white px-8 py-3 rounded-xl font-black text-xs uppercase tracking-widest hover:opacity-90 flex items-center gap-2 shadow-lg transition-all active:scale-95"
                         >
                             <Sparkles className="w-4 h-4" /> Launch Project <ArrowRight className="w-4 h-4" />
                         </button>
