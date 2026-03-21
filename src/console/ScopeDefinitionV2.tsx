@@ -56,7 +56,7 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
             .join(', ');
 
         setGenTelemetry(prev => [...prev, `Market: ${selectedCountry.name} | Languages: ${langNames}`]);
-        setGenTelemetry(prev => [...prev, 'Call 1/4: Generating category structure + 200 seed keywords...']);
+        setGenTelemetry(prev => [...prev, 'Call 1/4: Generating category structure + 300 seed keywords...']);
 
         const result = await generateCategoryConfig({
             categoryText: categoryText.trim(),

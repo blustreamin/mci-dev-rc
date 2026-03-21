@@ -65,7 +65,7 @@ Generate JSON:
     "consumerDescription": "<2-3 sentences about this category for consumers in ${input.countryName}>",
     "anchors": ["<8-12 strategic research pillars — e.g. Product Quality, Price & Value, Brand Trust, Purchase Channels, Health & Nutrition, Cooking & Usage, Freshness & Storage, Regional Preferences, Premium vs Mass, Online vs Offline>"],
     "subCategories": [{"name": "<n>", "anchors": ["<4-6 specific anchors>"]}],
-    "defaultKeywords": ["<EXACTLY 200 search keywords>"],
+    "defaultKeywords": ["<EXACTLY 300 search keywords>"],
     "keyBrands": ["<10-20 brands in ${input.countryName}>"]
 }
 
@@ -73,7 +73,7 @@ IMPORTANT: Generate 8-12 subCategories covering distinct research dimensions. NO
 
 KEYWORD RULES:
 - Every keyword = a real Google search query people in ${input.countryName} would type.
-- Mix: 40 head terms (1-2 words), 100 mid-tail (3-4 words), 60 long-tail (5+ words).
+- Mix: 60 head terms (1-2 words), 150 mid-tail (3-4 words), 90 long-tail (5+ words).
 - Include: brand queries, price queries, "best X", "X vs Y", "how to", "X review", "buy X online".
 - 80%+ must contain "${input.categoryText}" or a close variant.
 - Specific to ${input.countryName}. Use local platforms and currency.
@@ -86,7 +86,7 @@ Output ONLY JSON.`;
         const resp1 = await ai.models.generateContent({
             model: MODEL,
             contents: prompt1,
-            config: { maxOutputTokens: 8000, temperature: 0.7 },
+            config: { maxOutputTokens: 12000, temperature: 0.7 },
         });
 
         const parsed = safeParseJSON(resp1?.text || '');
@@ -112,7 +112,7 @@ Output ONLY JSON.`;
             await new Promise(r => setTimeout(r, 2500)); // Rate limit safety
 
             const b = batches[i];
-            const expandPrompt = `Generate EXACTLY 150 Google search keywords for "${parsed.category}" in ${input.countryName}.
+            const expandPrompt = `Generate EXACTLY 200 Google search keywords for "${parsed.category}" in ${input.countryName}.
 
 Focus: ${b.focus}
 Examples: ${b.detail}
@@ -130,7 +130,7 @@ Output ONLY a JSON array: ["keyword1", "keyword2", ...]`;
                 const resp = await ai.models.generateContent({
                     model: MODEL,
                     contents: expandPrompt,
-                    config: { maxOutputTokens: 5000, temperature: 0.8 },
+                    config: { maxOutputTokens: 8000, temperature: 0.8 },
                 });
                 const expanded = safeParseJSON(resp?.text || '');
                 if (Array.isArray(expanded)) {

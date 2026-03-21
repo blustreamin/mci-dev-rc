@@ -149,8 +149,13 @@ export const ProjectCorpusBuilder = {
 
         const categoryId = gen.id;
         const countryCode = project.geo.country;
-        const language = project.geo.language;
+        const primaryLanguage = project.geo.language;
         const locationCode = project.geo.locationCode;
+        // Multi-language: use all selected languages, fallback to primary
+        const allLanguages = (project.geo.languages && project.geo.languages.length > 0)
+            ? project.geo.languages.map(l => l.code)
+            : [primaryLanguage];
+        const language = primaryLanguage; // For row metadata
 
         const progress: CorpusBuildProgress = {
             phase: 'IDLE',
@@ -194,7 +199,7 @@ export const ProjectCorpusBuilder = {
             const dfsAuth = { login: creds.login, password: creds.password };
 
             // --- 3. FETCH VOLUMES FOR AI-GENERATED SEED KEYWORDS ---
-            emit('FETCHING_SEED_VOLUMES', `Fetching volumes for ${gen.defaultKeywords.length} seed keywords...`);
+            emit('FETCHING_SEED_VOLUMES', `Fetching volumes for ${gen.defaultKeywords.length} keywords (${allLanguages.join('+')} · ${countryCode})...`);
 
             const allDfsRows: DataForSeoRow[] = [];
             const seedKeywords = [...gen.defaultKeywords];
