@@ -74,20 +74,20 @@ Generate JSON with this schema:
     "consumerDescription": "<2-3 sentences about this category for consumers in ${input.countryName}>",
     "anchors": ["<6-10 strategic research pillars>"],
     "subCategories": [{"name": "<name>", "anchors": ["<4-8 anchors>"]}],
-    "defaultKeywords": ["<MUST be 200-250 keywords>"],
+    "defaultKeywords": ["<MUST be 500-700 keywords>"],
     "keyBrands": ["<10-20 brands in ${input.countryName}>"]
 }
 
 CRITICAL KEYWORD RULES — your keywords will be checked against real Google search data. Bad keywords = zero volume = useless corpus.
 
-GENERATE EXACTLY 200-250 KEYWORDS following this distribution:
+GENERATE 500-700 KEYWORDS following this distribution:
 
-HEAD TERMS (40 keywords, 1-2 words):
+HEAD TERMS (100 keywords, 1-2 words):
 - Generic category terms: "paneer", "cottage cheese", "tofu"
 - Brand names alone: "Amul", "Mother Dairy"  
 - Category + modifier: "fresh paneer", "organic paneer", "malai paneer"
 
-MID-TAIL (100 keywords, 3-4 words):
+MID-TAIL (250 keywords, 3-4 words):
 - "best paneer brand India"
 - "paneer price per kg"
 - "Amul paneer review"
@@ -97,7 +97,7 @@ MID-TAIL (100 keywords, 3-4 words):
 - "low fat paneer brand"
 - "paneer nutrition per 100g"
 
-LONG-TAIL (80 keywords, 5+ words):
+LONG-TAIL (200 keywords, 5+ words):
 - "how to check paneer is fresh"
 - "best paneer for butter masala"
 - "Amul paneer price 1 kg Delhi"
@@ -136,7 +136,7 @@ Output ONLY the JSON. No markdown.`;
             model: MODEL,
             contents: prompt,
             config: {
-                maxOutputTokens: 16000,  // 200+ keywords = large JSON
+                maxOutputTokens: 32000,  // 200+ keywords = large JSON
                 temperature: 0.7,        // Some creativity for keyword variety
             },
         });
@@ -156,7 +156,7 @@ Output ONLY the JSON. No markdown.`;
         if (parsed.anchors.length < 3) {
             return { ok: false, error: "AI generated too few anchors (need at least 3).", rawResponse: raw.substring(0, 500) };
         }
-        if (parsed.defaultKeywords.length < 100) {
+        if (parsed.defaultKeywords.length < 200) {
             return { ok: false, error: `Only ${parsed.defaultKeywords.length} keywords generated (need 100+). Try again.`, rawResponse: raw.substring(0, 500) };
         }
 

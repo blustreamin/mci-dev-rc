@@ -1,0 +1,217 @@
+diff --git a/src/console/StrategyView.tsx b/src/console/StrategyView.tsx
+index 69ca1ca..b8faaee 100644
+--- a/src/console/StrategyView.tsx
++++ b/src/console/StrategyView.tsx
+@@ -295,22 +295,25 @@ export const StrategyView: React.FC<StrategyViewProps> = ({
+                             Establish the consumer need foundation for demand analysis. The system will deconstruct selected categories into canonical consumer intent anchors using Gemini 3 Pro reasoning.
+                         </p>
+ 
+-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
++                        <div className="grid grid-cols-1 gap-4 mt-6">
+                             <div className="bg-slate-50 p-4 rounded-lg border border-slate-100">
+                                 <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+-                                    <ClipboardCheck className="w-3.5 h-3.5 text-indigo-500"/> Consumer Need Analysis Checklist
++                                    <ClipboardCheck className="w-3.5 h-3.5 text-indigo-500"/> Analysis Pipeline
+                                 </h4>
+                                 <ul className="space-y-2">
+-                                    {['6–12 Consumer Need Anchors per category', '45 keywords target per anchor', 'Deterministic consumer intent tagging', 'Full consumer need landscape mapping'].map((item, i) => (
++                                    {[
++                                        `${isProjectMode ? 'AI-generated' : 'Curated'} keyword corpus → Consumer need extraction`,
++                                        'Gemini 3 Pro reasoning for intent classification',
++                                        '7 analysis dimensions: Problems, Aspirations, Routines, Triggers, Barriers, Trends, Gaps',
++                                        'Consumer voice synthesis grounded in project geography',
++                                        'Scored insights (1-5) with evidence keywords'
++                                    ].map((item, i) => (
+                                         <li key={i} className="text-xs text-slate-600 flex items-center gap-2">
+                                             <div className="w-1 h-1 rounded-full bg-indigo-400" /> {item}
+                                         </li>
+                                     ))}
+                                 </ul>
+                             </div>
+-                            
+-                            {/* Snapshot Widget Integrated Here */}
+-                            <SnapshotWidget category={activeCategory} />
+                         </div>
+                     </div>
+ 
+diff --git a/src/services/categoryGenerationService.ts b/src/services/categoryGenerationService.ts
+index 62aed88..f0e5c6b 100644
+--- a/src/services/categoryGenerationService.ts
++++ b/src/services/categoryGenerationService.ts
+@@ -74,20 +74,20 @@ Generate JSON with this schema:
+     "consumerDescription": "<2-3 sentences about this category for consumers in ${input.countryName}>",
+     "anchors": ["<6-10 strategic research pillars>"],
+     "subCategories": [{"name": "<name>", "anchors": ["<4-8 anchors>"]}],
+-    "defaultKeywords": ["<MUST be 200-250 keywords>"],
++    "defaultKeywords": ["<MUST be 500-700 keywords>"],
+     "keyBrands": ["<10-20 brands in ${input.countryName}>"]
+ }
+ 
+ CRITICAL KEYWORD RULES — your keywords will be checked against real Google search data. Bad keywords = zero volume = useless corpus.
+ 
+-GENERATE EXACTLY 200-250 KEYWORDS following this distribution:
++GENERATE 500-700 KEYWORDS following this distribution:
+ 
+-HEAD TERMS (40 keywords, 1-2 words):
++HEAD TERMS (100 keywords, 1-2 words):
+ - Generic category terms: "paneer", "cottage cheese", "tofu"
+ - Brand names alone: "Amul", "Mother Dairy"  
+ - Category + modifier: "fresh paneer", "organic paneer", "malai paneer"
+ 
+-MID-TAIL (100 keywords, 3-4 words):
++MID-TAIL (250 keywords, 3-4 words):
+ - "best paneer brand India"
+ - "paneer price per kg"
+ - "Amul paneer review"
+@@ -97,7 +97,7 @@ MID-TAIL (100 keywords, 3-4 words):
+ - "low fat paneer brand"
+ - "paneer nutrition per 100g"
+ 
+-LONG-TAIL (80 keywords, 5+ words):
++LONG-TAIL (200 keywords, 5+ words):
+ - "how to check paneer is fresh"
+ - "best paneer for butter masala"
+ - "Amul paneer price 1 kg Delhi"
+@@ -136,7 +136,7 @@ Output ONLY the JSON. No markdown.`;
+             model: MODEL,
+             contents: prompt,
+             config: {
+-                maxOutputTokens: 16000,  // 200+ keywords = large JSON
++                maxOutputTokens: 32000,  // 200+ keywords = large JSON
+                 temperature: 0.7,        // Some creativity for keyword variety
+             },
+         });
+@@ -156,7 +156,7 @@ Output ONLY the JSON. No markdown.`;
+         if (parsed.anchors.length < 3) {
+             return { ok: false, error: "AI generated too few anchors (need at least 3).", rawResponse: raw.substring(0, 500) };
+         }
+-        if (parsed.defaultKeywords.length < 100) {
++        if (parsed.defaultKeywords.length < 200) {
+             return { ok: false, error: `Only ${parsed.defaultKeywords.length} keywords generated (need 100+). Try again.`, rawResponse: raw.substring(0, 500) };
+         }
+ 
+diff --git a/src/services/consumerNeedsSynthesisService.ts b/src/services/consumerNeedsSynthesisService.ts
+index a9d7660..48d13fb 100644
+--- a/src/services/consumerNeedsSynthesisService.ts
++++ b/src/services/consumerNeedsSynthesisService.ts
+@@ -66,34 +66,38 @@ export const ConsumerNeedsSynthesisService = {
+   async synthesizeChunk(
+     chunk: SnapshotRowLite[], 
+     categoryId: string,
+-    existing: ConsumerNeedsResult['sections']
++    existing: ConsumerNeedsResult['sections'],
++    context?: { countryName?: string; language?: string; projectName?: string }
+   ): Promise<ConsumerNeedsResult['sections']> {
+     const ai = getAI();
+     
+     // 1. Prepare Context
+-    const keywordsSample = chunk.map(r => `${r.keyword} (${r.volume})`).join(", ");
++    const keywordsSample = chunk.map(r => `${r.keyword || r.keyword_text} (${r.volume || 0})`).join(", ");
++    const geo = context?.countryName || 'India';
++    const lang = context?.language || 'English';
+     
+     const prompt = `
+-      Analyze this search data chunk for "${categoryId}" in India (Male Consumer, Tier 2/3 Focus).
++      Analyze this search data chunk for "${categoryId}" in ${geo}.
+       Keywords Sample: ${keywordsSample}
+ 
+       OBJECTIVE:
+-      Identify distinct consumer needs and insights. Avoid repetition.
+-      For each insight, generate a "Consumer Voice" section with quotes grounded in Indian context (Hinglish/Vernacular style implied).
++      Identify distinct consumer needs and insights for the ${geo} market.
++      For each insight, generate a "Consumer Voice" section with quotes grounded in ${geo} consumer context.
++      Consumer quotes MUST be in ${lang} (the market's primary language). Do NOT use Hinglish or Hindi unless the market language is Hindi.
+       
+       SECTIONS TO POPULATE:
+       1. Consumer Problems (Pain points, struggles)
+       2. Core Aspirations (Desired outcomes, goals)
+       3. Usage Routines (How/when they use it)
+       4. Search Triggers (Events/needs triggering search)
+-      5. Purchase Barriers (Price, trust, side effects)
+-      6. Emerging Trends (New ingredients, formats)
+-      7. Need Gaps (Unmet needs)
++      5. Purchase Barriers (Price, trust, quality concerns)
++      6. Emerging Trends (New products, formats, ingredients)
++      7. Need Gaps (Unmet needs in the market)
+       8. Intent Statements (I want to...)
+ 
+       SCORING GUIDE (1-5):
+-      5 = High Frequency + High Severity (Critical)
+-      4 = High Frequency (Common)
++      5 = High Frequency + High Severity (Critical consumer pain)
++      4 = High Frequency (Common need)
+       3 = Medium Impact (Relevant)
+       2 = Niche / Emerging
+       1 = Low / Noise
+@@ -191,10 +195,11 @@ export const ConsumerNeedsSynthesisService = {
+     }
+   },
+ 
+-  async enrichAnchorIntelligence(anchors: any[], categoryName: string): Promise<any[]> {
++  async enrichAnchorIntelligence(anchors: any[], categoryName: string, context?: { countryName?: string; language?: string }): Promise<any[]> {
+     const ai = getAI();
+-    // Fallback for huge lists
+     const processingAnchors = anchors.slice(0, 15);
++    const geo = context?.countryName || 'India';
++    const lang = context?.language || 'English';
+     
+     const anchorContexts = processingAnchors.map(a => ({
+         id: a.anchor_id,
+@@ -202,7 +207,7 @@ export const ConsumerNeedsSynthesisService = {
+     }));
+ 
+     const prompt = `
+-        Category: "${categoryName}" (India/Bharat Men's Grooming).
++        Category: "${categoryName}" (${geo} consumer market).
+         
+         I have identified the following Search Intent Anchors (clusters of user queries):
+         ${JSON.stringify(anchorContexts)}
+@@ -214,16 +219,16 @@ export const ConsumerNeedsSynthesisService = {
+             "profiles": [
+                 {
+                     "id": "string (must match anchor id exactly)",
+-                    "context": "string (2-3 sentences: Who is searching, what situation, what job-to-be-done. Be specific to India men context.)",
++                    "context": "string (2-3 sentences: Who is searching, what situation, what job-to-be-done. Be specific to ${geo} consumer context.)",
+                     "whyItMatters": ["string (bullet 1)", "string (bullet 2)"],
+-                    "exampleStatements": ["string (quote 1)", "string (quote 2)", "string (quote 3)"]
++                    "exampleStatements": ["string (quote 1 in ${lang})", "string (quote 2 in ${lang})", "string (quote 3 in ${lang})"]
+                 }
+             ]
+         }
+         
+         Constraints:
+-        - exampleStatements should sound like real Indian male consumers (casual, direct, maybe Hinglish hints if natural).
+-        - whyItMatters should explain strategic relevance.
++        - exampleStatements MUST be in ${lang}. They should sound like real consumers in ${geo}.
++        - whyItMatters should explain strategic relevance for the ${geo} market.
+     `;
+     
+     try {
+diff --git a/src/services/geminiService.ts b/src/services/geminiService.ts
+index 118771c..76b5a0c 100644
+--- a/src/services/geminiService.ts
++++ b/src/services/geminiService.ts
+@@ -223,7 +223,10 @@ export async function runPreSweepIntelligence(
+         const chunk = chunks[i];
+         logFn({ timestamp: new Date().toISOString(), stage: 'Strategy', category: category.category, step: 'SYNTH', attempt: 1, status: 'Running', durationMs: 0, message: `Synthesizing Chunk ${i+1}/${chunks.length}...` });
+         
+-        synthesisState = await ConsumerNeedsSynthesisService.synthesizeChunk(chunk, category.category, synthesisState);
++        synthesisState = await ConsumerNeedsSynthesisService.synthesizeChunk(chunk, category.category, synthesisState, {
++            countryName: (country as any)?.countryName || country as string || 'India',
++            language: (country as any)?.language || 'English',
++        });
+         
+         if (onUpdate) onUpdate('Processing Output', Math.round(((i+1)/chunks.length)*100), `Synthesized chunk ${i+1}`);
+         await yieldToUI();
+@@ -250,7 +253,10 @@ export async function runPreSweepIntelligence(
+ 
+     // NEW: Enrich Anchor Intelligence with Context (V2.3)
+     logFn({ timestamp: new Date().toISOString(), stage: 'Strategy', category: category.category, step: 'ENRICH_ANCHORS', attempt: 1, status: 'Running', durationMs: 0, message: 'Enriching anchor context...' });
+-    const enrichedAnchorIntel = await ConsumerNeedsSynthesisService.enrichAnchorIntelligence(anchorIntel, category.category);
++    const enrichedAnchorIntel = await ConsumerNeedsSynthesisService.enrichAnchorIntelligence(anchorIntel, category.category, {
++        countryName: (country as any)?.countryName || country as string || 'India',
++        language: (country as any)?.language || 'English',
++    });
+ 
+     // Map to PreSweepData
+     const preSweep = mapIncrementalToPreSweep(

@@ -223,7 +223,10 @@ export async function runPreSweepIntelligence(
         const chunk = chunks[i];
         logFn({ timestamp: new Date().toISOString(), stage: 'Strategy', category: category.category, step: 'SYNTH', attempt: 1, status: 'Running', durationMs: 0, message: `Synthesizing Chunk ${i+1}/${chunks.length}...` });
         
-        synthesisState = await ConsumerNeedsSynthesisService.synthesizeChunk(chunk, category.category, synthesisState);
+        synthesisState = await ConsumerNeedsSynthesisService.synthesizeChunk(chunk, category.category, synthesisState, {
+            countryName: (country as any)?.countryName || country as string || 'India',
+            language: (country as any)?.language || 'English',
+        });
         
         if (onUpdate) onUpdate('Processing Output', Math.round(((i+1)/chunks.length)*100), `Synthesized chunk ${i+1}`);
         await yieldToUI();
@@ -250,7 +253,10 @@ export async function runPreSweepIntelligence(
 
     // NEW: Enrich Anchor Intelligence with Context (V2.3)
     logFn({ timestamp: new Date().toISOString(), stage: 'Strategy', category: category.category, step: 'ENRICH_ANCHORS', attempt: 1, status: 'Running', durationMs: 0, message: 'Enriching anchor context...' });
-    const enrichedAnchorIntel = await ConsumerNeedsSynthesisService.enrichAnchorIntelligence(anchorIntel, category.category);
+    const enrichedAnchorIntel = await ConsumerNeedsSynthesisService.enrichAnchorIntelligence(anchorIntel, category.category, {
+        countryName: (country as any)?.countryName || country as string || 'India',
+        language: (country as any)?.language || 'English',
+    });
 
     // Map to PreSweepData
     const preSweep = mapIncrementalToPreSweep(

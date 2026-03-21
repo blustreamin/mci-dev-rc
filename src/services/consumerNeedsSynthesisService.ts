@@ -66,34 +66,38 @@ export const ConsumerNeedsSynthesisService = {
   async synthesizeChunk(
     chunk: SnapshotRowLite[], 
     categoryId: string,
-    existing: ConsumerNeedsResult['sections']
+    existing: ConsumerNeedsResult['sections'],
+    context?: { countryName?: string; language?: string; projectName?: string }
   ): Promise<ConsumerNeedsResult['sections']> {
     const ai = getAI();
     
     // 1. Prepare Context
-    const keywordsSample = chunk.map(r => `${r.keyword} (${r.volume})`).join(", ");
+    const keywordsSample = chunk.map(r => `${r.keyword || r.keyword_text} (${r.volume || 0})`).join(", ");
+    const geo = context?.countryName || 'India';
+    const lang = context?.language || 'English';
     
     const prompt = `
-      Analyze this search data chunk for "${categoryId}" in India (Male Consumer, Tier 2/3 Focus).
+      Analyze this search data chunk for "${categoryId}" in ${geo}.
       Keywords Sample: ${keywordsSample}
 
       OBJECTIVE:
-      Identify distinct consumer needs and insights. Avoid repetition.
-      For each insight, generate a "Consumer Voice" section with quotes grounded in Indian context (Hinglish/Vernacular style implied).
+      Identify distinct consumer needs and insights for the ${geo} market.
+      For each insight, generate a "Consumer Voice" section with quotes grounded in ${geo} consumer context.
+      Consumer quotes MUST be in ${lang} (the market's primary language). Do NOT use Hinglish or Hindi unless the market language is Hindi.
       
       SECTIONS TO POPULATE:
       1. Consumer Problems (Pain points, struggles)
       2. Core Aspirations (Desired outcomes, goals)
       3. Usage Routines (How/when they use it)
       4. Search Triggers (Events/needs triggering search)
-      5. Purchase Barriers (Price, trust, side effects)
-      6. Emerging Trends (New ingredients, formats)
-      7. Need Gaps (Unmet needs)
+      5. Purchase Barriers (Price, trust, quality concerns)
+      6. Emerging Trends (New products, formats, ingredients)
+      7. Need Gaps (Unmet needs in the market)
       8. Intent Statements (I want to...)
 
       SCORING GUIDE (1-5):
-      5 = High Frequency + High Severity (Critical)
-      4 = High Frequency (Common)
+      5 = High Frequency + High Severity (Critical consumer pain)
+      4 = High Frequency (Common need)
       3 = Medium Impact (Relevant)
       2 = Niche / Emerging
       1 = Low / Noise
@@ -191,10 +195,11 @@ export const ConsumerNeedsSynthesisService = {
     }
   },
 
-  async enrichAnchorIntelligence(anchors: any[], categoryName: string): Promise<any[]> {
+  async enrichAnchorIntelligence(anchors: any[], categoryName: string, context?: { countryName?: string; language?: string }): Promise<any[]> {
     const ai = getAI();
-    // Fallback for huge lists
     const processingAnchors = anchors.slice(0, 15);
+    const geo = context?.countryName || 'India';
+    const lang = context?.language || 'English';
     
     const anchorContexts = processingAnchors.map(a => ({
         id: a.anchor_id,
@@ -202,7 +207,7 @@ export const ConsumerNeedsSynthesisService = {
     }));
 
     const prompt = `
-        Category: "${categoryName}" (India/Bharat Men's Grooming).
+        Category: "${categoryName}" (${geo} consumer market).
         
         I have identified the following Search Intent Anchors (clusters of user queries):
         ${JSON.stringify(anchorContexts)}
@@ -214,16 +219,16 @@ export const ConsumerNeedsSynthesisService = {
             "profiles": [
                 {
                     "id": "string (must match anchor id exactly)",
-                    "context": "string (2-3 sentences: Who is searching, what situation, what job-to-be-done. Be specific to India men context.)",
+                    "context": "string (2-3 sentences: Who is searching, what situation, what job-to-be-done. Be specific to ${geo} consumer context.)",
                     "whyItMatters": ["string (bullet 1)", "string (bullet 2)"],
-                    "exampleStatements": ["string (quote 1)", "string (quote 2)", "string (quote 3)"]
+                    "exampleStatements": ["string (quote 1 in ${lang})", "string (quote 2 in ${lang})", "string (quote 3 in ${lang})"]
                 }
             ]
         }
         
         Constraints:
-        - exampleStatements should sound like real Indian male consumers (casual, direct, maybe Hinglish hints if natural).
-        - whyItMatters should explain strategic relevance.
+        - exampleStatements MUST be in ${lang}. They should sound like real consumers in ${geo}.
+        - whyItMatters should explain strategic relevance for the ${geo} market.
     `;
     
     try {

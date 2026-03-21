@@ -295,22 +295,25 @@ export const StrategyView: React.FC<StrategyViewProps> = ({
                             Establish the consumer need foundation for demand analysis. The system will deconstruct selected categories into canonical consumer intent anchors using Gemini 3 Pro reasoning.
                         </p>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
+                        <div className="grid grid-cols-1 gap-4 mt-6">
                             <div className="bg-slate-50 p-4 rounded-lg border border-slate-100">
                                 <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                                    <ClipboardCheck className="w-3.5 h-3.5 text-indigo-500"/> Consumer Need Analysis Checklist
+                                    <ClipboardCheck className="w-3.5 h-3.5 text-indigo-500"/> Analysis Pipeline
                                 </h4>
                                 <ul className="space-y-2">
-                                    {['6–12 Consumer Need Anchors per category', '45 keywords target per anchor', 'Deterministic consumer intent tagging', 'Full consumer need landscape mapping'].map((item, i) => (
+                                    {[
+                                        `${isProjectMode ? 'AI-generated' : 'Curated'} keyword corpus → Consumer need extraction`,
+                                        'Gemini 3 Pro reasoning for intent classification',
+                                        '7 analysis dimensions: Problems, Aspirations, Routines, Triggers, Barriers, Trends, Gaps',
+                                        'Consumer voice synthesis grounded in project geography',
+                                        'Scored insights (1-5) with evidence keywords'
+                                    ].map((item, i) => (
                                         <li key={i} className="text-xs text-slate-600 flex items-center gap-2">
                                             <div className="w-1 h-1 rounded-full bg-indigo-400" /> {item}
                                         </li>
                                     ))}
                                 </ul>
                             </div>
-                            
-                            {/* Snapshot Widget Integrated Here */}
-                            <SnapshotWidget category={activeCategory} />
                         </div>
                     </div>
 
