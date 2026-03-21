@@ -3,6 +3,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { StrategyView } from './console/StrategyView';
 import { DemandSweepView } from './console/DemandSweepView';
 import { ScopeDefinition } from './console/ScopeDefinition';
+import { ScopeDefinitionV2 } from './console/ScopeDefinitionV2';
+import { ProjectDefinition, projectToCategories } from './config/projectContext';
 import { TaskExecutionModal } from './console/TaskExecutionModal';
 import { AuditView } from './console/AuditView';
 import { ImageLabView } from './console/ImageLabView';
@@ -49,6 +51,27 @@ const App: React.FC = () => {
 
     const [onboardingSelection, setOnboardingSelection] = useState<Record<string, boolean>>({});
     const [scopeSelection, setScopeSelection] = useState<any>({});
+    const [activeProject, setActiveProject] = useState<ProjectDefinition | null>(null);
+    
+    // Bridge: When new ScopeDefinitionV2 completes, convert to legacy format for downstream gears
+    const handleProjectReady = (project: ProjectDefinition) => {
+        setActiveProject(project);
+        const categories = projectToCategories(project);
+        if (categories.length > 0) {
+            const newSelection: Record<string, boolean> = {};
+            const newScope: any = {};
+            categories.forEach(cat => {
+                newSelection[cat.id] = true;
+                newScope[cat.id] = {
+                    subCategories: cat.subCategories.map(sc => sc.name),
+                    anchors: cat.subCategories.flatMap(sc => sc.anchors),
+                };
+            });
+            setOnboardingSelection(newSelection);
+            setScopeSelection(newScope);
+        }
+        setActiveGear('STRATEGY');
+    };
     
     const [strategyResults, setStrategyResults] = useState<Record<string, FetchableData<PreSweepData>>>({});
     const [demandResults, setDemandResults] = useState<Record<string, FetchableData<SweepResult>>>({});
@@ -321,11 +344,11 @@ const App: React.FC = () => {
                             </div>
                             <div className="flex flex-col min-w-0">
                                 <div className="flex items-center gap-2">
-                                    <span className="font-bold text-sm sm:text-lg tracking-tight truncate uppercase leading-none">Blustream</span>
-                                    <span className="px-1.5 py-0.5 bg-white/10 border border-white/10 text-white/40 text-[8px] font-black rounded uppercase whitespace-nowrap">RC · Jan 2026</span>
+                                    <span className="font-bold text-sm sm:text-lg tracking-tight truncate uppercase leading-none">Urchin</span>
+                                    <span className="px-1.5 py-0.5 bg-white/10 border border-white/10 text-white/40 text-[8px] font-black rounded uppercase whitespace-nowrap">Platform v1</span>
                                 </div>
                                 <div className="flex items-center gap-2 mt-1">
-                                    <span className="text-[10px] text-blue-400 font-black uppercase tracking-widest leading-none">Intelligence</span>
+                                    <span className="text-[10px] text-blue-400 font-black uppercase tracking-widest leading-none">Consumer Intelligence</span>
                                 </div>
                             </div>
                         </div>
@@ -385,12 +408,8 @@ const App: React.FC = () => {
 
                 <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
                     {activeGear === 'ONBOARDING' && (
-                        <ScopeDefinition 
-                            onboardingSelection={onboardingSelection} 
-                            setOnboardingSelection={setOnboardingSelection}
-                            scopeSelection={scopeSelection}
-                            setScopeSelection={setScopeSelection}
-                            onProceed={() => setActiveGear('STRATEGY')}
+                        <ScopeDefinitionV2
+                            onProjectReady={handleProjectReady}
                         />
                     )}
                     {activeGear === 'STRATEGY' && (

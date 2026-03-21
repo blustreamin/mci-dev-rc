@@ -1,0 +1,942 @@
+From d01d6cf455bd6219eecd94b626ef2bd86eebb363 Mon Sep 17 00:00:00 2001
+From: Venkat <venkat@blustream.in>
+Date: Sat, 21 Mar 2026 04:15:45 +0000
+Subject: [PATCH] feat: self-serve scope definition with AI category generation
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- New ScopeDefinitionV2: two-step flow (Market + Geography)
+- AI-powered category generation via Gemini (free-text → full CategoryBaseline)
+- ProjectContext with 25 countries, 14 industries, DFS location codes
+- Bridge adapter: ProjectDefinition → CategoryBaseline for downstream compatibility
+- Header rebrand: Blustream → Urchin Platform v1
+- Original ScopeDefinition preserved as fallback
+---
+ src/App.tsx                               |  37 +-
+ src/config/projectContext.ts              | 206 ++++++++++
+ src/console/ScopeDefinitionV2.tsx         | 478 ++++++++++++++++++++++
+ src/services/categoryGenerationService.ts | 142 +++++++
+ 4 files changed, 854 insertions(+), 9 deletions(-)
+ create mode 100644 src/config/projectContext.ts
+ create mode 100644 src/console/ScopeDefinitionV2.tsx
+ create mode 100644 src/services/categoryGenerationService.ts
+
+diff --git a/src/App.tsx b/src/App.tsx
+index 639503b..15429a2 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -3,6 +3,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
+ import { StrategyView } from './console/StrategyView';
+ import { DemandSweepView } from './console/DemandSweepView';
+ import { ScopeDefinition } from './console/ScopeDefinition';
++import { ScopeDefinitionV2 } from './console/ScopeDefinitionV2';
++import { ProjectDefinition, projectToCategories } from './config/projectContext';
+ import { TaskExecutionModal } from './console/TaskExecutionModal';
+ import { AuditView } from './console/AuditView';
+ import { ImageLabView } from './console/ImageLabView';
+@@ -49,6 +51,27 @@ const App: React.FC = () => {
+ 
+     const [onboardingSelection, setOnboardingSelection] = useState<Record<string, boolean>>({});
+     const [scopeSelection, setScopeSelection] = useState<any>({});
++    const [activeProject, setActiveProject] = useState<ProjectDefinition | null>(null);
++    
++    // Bridge: When new ScopeDefinitionV2 completes, convert to legacy format for downstream gears
++    const handleProjectReady = (project: ProjectDefinition) => {
++        setActiveProject(project);
++        const categories = projectToCategories(project);
++        if (categories.length > 0) {
++            const newSelection: Record<string, boolean> = {};
++            const newScope: any = {};
++            categories.forEach(cat => {
++                newSelection[cat.id] = true;
++                newScope[cat.id] = {
++                    subCategories: cat.subCategories.map(sc => sc.name),
++                    anchors: cat.subCategories.flatMap(sc => sc.anchors),
++                };
++            });
++            setOnboardingSelection(newSelection);
++            setScopeSelection(newScope);
++        }
++        setActiveGear('STRATEGY');
++    };
+     
+     const [strategyResults, setStrategyResults] = useState<Record<string, FetchableData<PreSweepData>>>({});
+     const [demandResults, setDemandResults] = useState<Record<string, FetchableData<SweepResult>>>({});
+@@ -321,11 +344,11 @@ const App: React.FC = () => {
+                             </div>
+                             <div className="flex flex-col min-w-0">
+                                 <div className="flex items-center gap-2">
+-                                    <span className="font-bold text-sm sm:text-lg tracking-tight truncate uppercase leading-none">Blustream</span>
+-                                    <span className="px-1.5 py-0.5 bg-white/10 border border-white/10 text-white/40 text-[8px] font-black rounded uppercase whitespace-nowrap">RC · Jan 2026</span>
++                                    <span className="font-bold text-sm sm:text-lg tracking-tight truncate uppercase leading-none">Urchin</span>
++                                    <span className="px-1.5 py-0.5 bg-white/10 border border-white/10 text-white/40 text-[8px] font-black rounded uppercase whitespace-nowrap">Platform v1</span>
+                                 </div>
+                                 <div className="flex items-center gap-2 mt-1">
+-                                    <span className="text-[10px] text-blue-400 font-black uppercase tracking-widest leading-none">Intelligence</span>
++                                    <span className="text-[10px] text-blue-400 font-black uppercase tracking-widest leading-none">Consumer Intelligence</span>
+                                 </div>
+                             </div>
+                         </div>
+@@ -385,12 +408,8 @@ const App: React.FC = () => {
+ 
+                 <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                     {activeGear === 'ONBOARDING' && (
+-                        <ScopeDefinition 
+-                            onboardingSelection={onboardingSelection} 
+-                            setOnboardingSelection={setOnboardingSelection}
+-                            scopeSelection={scopeSelection}
+-                            setScopeSelection={setScopeSelection}
+-                            onProceed={() => setActiveGear('STRATEGY')}
++                        <ScopeDefinitionV2
++                            onProjectReady={handleProjectReady}
+                         />
+                     )}
+                     {activeGear === 'STRATEGY' && (
+diff --git a/src/config/projectContext.ts b/src/config/projectContext.ts
+new file mode 100644
+index 0000000..bf86bd5
+--- /dev/null
++++ b/src/config/projectContext.ts
+@@ -0,0 +1,206 @@
++/**
++ * ProjectContext — Dynamic Runtime Configuration
++ * 
++ * Replaces all hardcoded CORE_CATEGORIES, country='IN', location=2356, language='en'
++ * with a user-defined, AI-generated project scope.
++ * 
++ * This is the single source of truth for "what are we researching, where, and for whom."
++ */
++
++import { CategoryBaseline } from '../types';
++
++// --- GEOGRAPHY ---
++
++export interface GeoConfig {
++    country: string;           // ISO 2-letter: 'IN', 'US', 'GB', 'AE', etc.
++    countryName: string;       // 'India', 'United States', etc.
++    locationCode: number;      // DataForSEO location code: 2356, 2840, etc.
++    language: string;          // ISO: 'en', 'hi', 'ar', etc.
++    languageName: string;      // 'English', 'Hindi', etc.
++    marketTier?: string;       // Optional: 'All', 'Metro/Tier 1', 'Tier 2', 'Tier 3'
++}
++
++// --- INDUSTRY ---
++
++export type IndustryId = 
++    | 'fmcg-cpg'
++    | 'beauty-personal-care'
++    | 'consumer-electronics'
++    | 'food-beverage'
++    | 'health-wellness'
++    | 'fashion-apparel'
++    | 'automotive'
++    | 'home-living'
++    | 'financial-services'
++    | 'technology-saas'
++    | 'travel-hospitality'
++    | 'education'
++    | 'retail-d2c'
++    | 'other';
++
++export interface IndustryOption {
++    id: IndustryId;
++    label: string;
++    icon: string;    // emoji for quick visual
++    examples: string;
++}
++
++export const INDUSTRIES: IndustryOption[] = [
++    { id: 'fmcg-cpg', label: 'FMCG / CPG', icon: '🧴', examples: 'Soaps, detergents, packaged foods, toiletries' },
++    { id: 'beauty-personal-care', label: 'Beauty & Personal Care', icon: '💄', examples: 'Skincare, haircare, cosmetics, grooming' },
++    { id: 'consumer-electronics', label: 'Consumer Electronics', icon: '📱', examples: 'Smartphones, laptops, wearables, audio' },
++    { id: 'food-beverage', label: 'Food & Beverage', icon: '🍽️', examples: 'Snacks, beverages, dairy, health foods' },
++    { id: 'health-wellness', label: 'Health & Wellness', icon: '💊', examples: 'Supplements, fitness, pharma OTC, mental health' },
++    { id: 'fashion-apparel', label: 'Fashion & Apparel', icon: '👕', examples: 'Clothing, footwear, accessories, luxury' },
++    { id: 'automotive', label: 'Automotive', icon: '🚗', examples: 'Cars, EVs, two-wheelers, aftermarket' },
++    { id: 'home-living', label: 'Home & Living', icon: '🏠', examples: 'Furniture, appliances, home decor, kitchen' },
++    { id: 'financial-services', label: 'Financial Services', icon: '💳', examples: 'Banking, insurance, lending, investments' },
++    { id: 'technology-saas', label: 'Technology / SaaS', icon: '💻', examples: 'Software, cloud, dev tools, AI products' },
++    { id: 'travel-hospitality', label: 'Travel & Hospitality', icon: '✈️', examples: 'Hotels, airlines, tourism, experiences' },
++    { id: 'education', label: 'Education', icon: '📚', examples: 'EdTech, coaching, courses, universities' },
++    { id: 'retail-d2c', label: 'Retail / D2C', icon: '🛒', examples: 'E-commerce, marketplace, direct-to-consumer' },
++    { id: 'other', label: 'Other', icon: '🔍', examples: 'Custom category not listed above' },
++];
++
++// --- SUPPORTED COUNTRIES (Top markets with DFS location codes) ---
++
++export interface CountryOption {
++    code: string;
++    name: string;
++    locationCode: number;
++    defaultLanguage: string;
++    defaultLanguageName: string;
++    languages: { code: string; name: string }[];
++    flag: string;
++}
++
++export const COUNTRIES: CountryOption[] = [
++    { code: 'IN', name: 'India', locationCode: 2356, defaultLanguage: 'en', defaultLanguageName: 'English', flag: '🇮🇳',
++      languages: [{ code: 'en', name: 'English' }, { code: 'hi', name: 'Hindi' }, { code: 'ta', name: 'Tamil' }, { code: 'te', name: 'Telugu' }, { code: 'bn', name: 'Bengali' }, { code: 'mr', name: 'Marathi' }] },
++    { code: 'US', name: 'United States', locationCode: 2840, defaultLanguage: 'en', defaultLanguageName: 'English', flag: '🇺🇸',
++      languages: [{ code: 'en', name: 'English' }, { code: 'es', name: 'Spanish' }] },
++    { code: 'GB', name: 'United Kingdom', locationCode: 2826, defaultLanguage: 'en', defaultLanguageName: 'English', flag: '🇬🇧',
++      languages: [{ code: 'en', name: 'English' }] },
++    { code: 'AE', name: 'United Arab Emirates', locationCode: 2784, defaultLanguage: 'en', defaultLanguageName: 'English', flag: '🇦🇪',
++      languages: [{ code: 'en', name: 'English' }, { code: 'ar', name: 'Arabic' }] },
++    { code: 'SA', name: 'Saudi Arabia', locationCode: 2682, defaultLanguage: 'ar', defaultLanguageName: 'Arabic', flag: '🇸🇦',
++      languages: [{ code: 'ar', name: 'Arabic' }, { code: 'en', name: 'English' }] },
++    { code: 'DE', name: 'Germany', locationCode: 2276, defaultLanguage: 'de', defaultLanguageName: 'German', flag: '🇩🇪',
++      languages: [{ code: 'de', name: 'German' }, { code: 'en', name: 'English' }] },
++    { code: 'FR', name: 'France', locationCode: 2250, defaultLanguage: 'fr', defaultLanguageName: 'French', flag: '🇫🇷',
++      languages: [{ code: 'fr', name: 'French' }, { code: 'en', name: 'English' }] },
++    { code: 'JP', name: 'Japan', locationCode: 2392, defaultLanguage: 'ja', defaultLanguageName: 'Japanese', flag: '🇯🇵',
++      languages: [{ code: 'ja', name: 'Japanese' }, { code: 'en', name: 'English' }] },
++    { code: 'AU', name: 'Australia', locationCode: 2036, defaultLanguage: 'en', defaultLanguageName: 'English', flag: '🇦🇺',
++      languages: [{ code: 'en', name: 'English' }] },
++    { code: 'CA', name: 'Canada', locationCode: 2124, defaultLanguage: 'en', defaultLanguageName: 'English', flag: '🇨🇦',
++      languages: [{ code: 'en', name: 'English' }, { code: 'fr', name: 'French' }] },
++    { code: 'BR', name: 'Brazil', locationCode: 2076, defaultLanguage: 'pt', defaultLanguageName: 'Portuguese', flag: '🇧🇷',
++      languages: [{ code: 'pt', name: 'Portuguese' }] },
++    { code: 'MX', name: 'Mexico', locationCode: 2484, defaultLanguage: 'es', defaultLanguageName: 'Spanish', flag: '🇲🇽',
++      languages: [{ code: 'es', name: 'Spanish' }] },
++    { code: 'SG', name: 'Singapore', locationCode: 2702, defaultLanguage: 'en', defaultLanguageName: 'English', flag: '🇸🇬',
++      languages: [{ code: 'en', name: 'English' }, { code: 'zh', name: 'Chinese' }, { code: 'ms', name: 'Malay' }] },
++    { code: 'ID', name: 'Indonesia', locationCode: 2360, defaultLanguage: 'id', defaultLanguageName: 'Indonesian', flag: '🇮🇩',
++      languages: [{ code: 'id', name: 'Indonesian' }, { code: 'en', name: 'English' }] },
++    { code: 'KR', name: 'South Korea', locationCode: 2410, defaultLanguage: 'ko', defaultLanguageName: 'Korean', flag: '🇰🇷',
++      languages: [{ code: 'ko', name: 'Korean' }, { code: 'en', name: 'English' }] },
++    { code: 'NG', name: 'Nigeria', locationCode: 2566, defaultLanguage: 'en', defaultLanguageName: 'English', flag: '🇳🇬',
++      languages: [{ code: 'en', name: 'English' }] },
++    { code: 'ZA', name: 'South Africa', locationCode: 2710, defaultLanguage: 'en', defaultLanguageName: 'English', flag: '🇿🇦',
++      languages: [{ code: 'en', name: 'English' }, { code: 'af', name: 'Afrikaans' }] },
++    { code: 'PH', name: 'Philippines', locationCode: 2608, defaultLanguage: 'en', defaultLanguageName: 'English', flag: '🇵🇭',
++      languages: [{ code: 'en', name: 'English' }, { code: 'tl', name: 'Filipino' }] },
++    { code: 'TH', name: 'Thailand', locationCode: 2764, defaultLanguage: 'th', defaultLanguageName: 'Thai', flag: '🇹🇭',
++      languages: [{ code: 'th', name: 'Thai' }, { code: 'en', name: 'English' }] },
++    { code: 'IT', name: 'Italy', locationCode: 2380, defaultLanguage: 'it', defaultLanguageName: 'Italian', flag: '🇮🇹',
++      languages: [{ code: 'it', name: 'Italian' }, { code: 'en', name: 'English' }] },
++    { code: 'ES', name: 'Spain', locationCode: 2724, defaultLanguage: 'es', defaultLanguageName: 'Spanish', flag: '🇪🇸',
++      languages: [{ code: 'es', name: 'Spanish' }, { code: 'en', name: 'English' }] },
++    { code: 'TR', name: 'Turkey', locationCode: 2792, defaultLanguage: 'tr', defaultLanguageName: 'Turkish', flag: '🇹🇷',
++      languages: [{ code: 'tr', name: 'Turkish' }, { code: 'en', name: 'English' }] },
++    { code: 'EG', name: 'Egypt', locationCode: 2818, defaultLanguage: 'ar', defaultLanguageName: 'Arabic', flag: '🇪🇬',
++      languages: [{ code: 'ar', name: 'Arabic' }, { code: 'en', name: 'English' }] },
++    { code: 'MY', name: 'Malaysia', locationCode: 2458, defaultLanguage: 'en', defaultLanguageName: 'English', flag: '🇲🇾',
++      languages: [{ code: 'en', name: 'English' }, { code: 'ms', name: 'Malay' }] },
++    { code: 'VN', name: 'Vietnam', locationCode: 2704, defaultLanguage: 'vi', defaultLanguageName: 'Vietnamese', flag: '🇻🇳',
++      languages: [{ code: 'vi', name: 'Vietnamese' }, { code: 'en', name: 'English' }] },
++];
++
++// --- AI-GENERATED CATEGORY CONFIG ---
++
++export interface AiGeneratedCategory {
++    id: string;                // slug: 'premium-pet-food', 'electric-scooters', etc.
++    category: string;          // Display name: 'Premium Pet Food'
++    consumerDescription: string;
++    anchors: string[];
++    subCategories: { name: string; anchors: string[] }[];
++    defaultKeywords: string[];
++    keyBrands: string[];
++    generatedAt: string;       // ISO timestamp
++}
++
++// --- PROJECT DEFINITION (the full scope) ---
++
++export interface ProjectDefinition {
++    projectId: string;         // Unique ID: 'proj_<timestamp>'
++    projectName: string;       // User-facing: 'Premium Pet Food — India'
++    
++    // Step 1: Market
++    industry: IndustryId;
++    categoryInput: string;     // Raw user input: 'premium dog food'
++    generatedCategory: AiGeneratedCategory | null;
++    
++    // Step 2: Geography
++    geo: GeoConfig;
++    
++    // Metadata
++    createdAt: string;
++    status: 'DRAFTING' | 'GENERATING' | 'READY' | 'FAILED';
++}
++
++// --- ADAPTER: Convert ProjectDefinition → CategoryBaseline ---
++// This is the bridge that lets all existing downstream gears work unchanged.
++
++export function projectToCategories(project: ProjectDefinition): CategoryBaseline[] {
++    if (!project.generatedCategory) return [];
++    
++    const gen = project.generatedCategory;
++    return [{
++        id: gen.id,
++        category: gen.category,
++        demandIndex: 0,          // Will be computed by demand sweep
++        engagementReadiness: 'Unknown',
++        demandSpread: 'Unknown',
++        shortlist: true,
++        consumerDescription: gen.consumerDescription,
++        anchors: gen.anchors,
++        subCategories: gen.subCategories,
++        defaultKeywords: gen.defaultKeywords,
++        kantarMapping: { status: 'Not Applicable', mappedSubCategories: [] },
++        nielsenMapping: { status: 'Not Applicable', mappedSubCategories: [] },
++        coverageNotes: `AI-generated category for ${project.geo.countryName}. Created ${gen.generatedAt}.`,
++        keyBrands: gen.keyBrands,
++    }];
++}
++
++// --- DEFAULT PROJECT (for backwards compatibility) ---
++
++export function createDefaultProject(): ProjectDefinition {
++    return {
++        projectId: `proj_${Date.now()}`,
++        projectName: '',
++        industry: 'other',
++        categoryInput: '',
++        generatedCategory: null,
++        geo: {
++            country: 'IN',
++            countryName: 'India',
++            locationCode: 2356,
++            language: 'en',
++            languageName: 'English',
++        },
++        createdAt: new Date().toISOString(),
++        status: 'DRAFTING',
++    };
++}
+diff --git a/src/console/ScopeDefinitionV2.tsx b/src/console/ScopeDefinitionV2.tsx
+new file mode 100644
+index 0000000..a4a45e1
+--- /dev/null
++++ b/src/console/ScopeDefinitionV2.tsx
+@@ -0,0 +1,478 @@
++/**
++ * ScopeDefinition V2 — Self-Serve Project Setup
++ * 
++ * Two-step flow:
++ * Step 1: Define your market (industry + free-text category → AI generates config)
++ * Step 2: Select geography (country + language)
++ * 
++ * Outputs a ProjectDefinition that replaces hardcoded CORE_CATEGORIES.
++ */
++
++import React, { useState, useEffect } from 'react';
++import { 
++    ArrowRight, ArrowLeft, Sparkles, Globe, Loader2, Check, AlertTriangle, 
++    Search, ChevronDown, X, BarChart3, Tag, Building2, MapPin, Languages
++} from 'lucide-react';
++import { 
++    INDUSTRIES, COUNTRIES, IndustryId, CountryOption,
++    ProjectDefinition, createDefaultProject, GeoConfig
++} from '../config/projectContext';
++import { generateCategoryConfig } from '../services/categoryGenerationService';
++import { AiGeneratedCategory } from '../config/projectContext';
++
++interface ScopeDefinitionV2Props {
++    onProjectReady: (project: ProjectDefinition) => void;
++}
++
++export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectReady }) => {
++    const [step, setStep] = useState<1 | 2>(1);
++    const [project, setProject] = useState<ProjectDefinition>(createDefaultProject());
++    
++    // Step 1 state
++    const [selectedIndustry, setSelectedIndustry] = useState<IndustryId | null>(null);
++    const [categoryText, setCategoryText] = useState('');
++    const [isGenerating, setIsGenerating] = useState(false);
++    const [generationError, setGenerationError] = useState<string | null>(null);
++    const [generatedCategory, setGeneratedCategory] = useState<AiGeneratedCategory | null>(null);
++    
++    // Step 2 state
++    const [countrySearch, setCountrySearch] = useState('');
++    const [showCountryDropdown, setShowCountryDropdown] = useState(false);
++    const [selectedCountry, setSelectedCountry] = useState<CountryOption>(COUNTRIES[0]); // Default: India
++    const [selectedLanguage, setSelectedLanguage] = useState('en');
++
++    // --- STEP 1: AI Category Generation ---
++    const handleGenerate = async () => {
++        if (!categoryText.trim() || !selectedIndustry) return;
++        
++        setIsGenerating(true);
++        setGenerationError(null);
++        setGeneratedCategory(null);
++
++        const result = await generateCategoryConfig({
++            categoryText: categoryText.trim(),
++            industry: selectedIndustry,
++            countryName: selectedCountry.name,
++            countryCode: selectedCountry.code,
++            language: selectedCountry.languages.find(l => l.code === selectedLanguage)?.name || 'English',
++        });
++
++        if (result.ok && result.category) {
++            setGeneratedCategory(result.category);
++            setProject(prev => ({
++                ...prev,
++                industry: selectedIndustry,
++                categoryInput: categoryText.trim(),
++                generatedCategory: result.category!,
++                projectName: `${result.category!.category} — ${selectedCountry.name}`,
++                status: 'READY',
++            }));
++        } else {
++            setGenerationError(result.error || 'Generation failed. Please try again.');
++        }
++        
++        setIsGenerating(false);
++    };
++
++    // --- STEP 2: Geography ---
++    const filteredCountries = COUNTRIES.filter(c => 
++        c.name.toLowerCase().includes(countrySearch.toLowerCase()) ||
++        c.code.toLowerCase().includes(countrySearch.toLowerCase())
++    );
++
++    const handleCountrySelect = (country: CountryOption) => {
++        setSelectedCountry(country);
++        setSelectedLanguage(country.defaultLanguage);
++        setShowCountryDropdown(false);
++        setCountrySearch('');
++        
++        // If we already generated a category, we might want to regenerate for the new country
++        // For now, just update the geo config
++        setProject(prev => ({
++            ...prev,
++            geo: {
++                country: country.code,
++                countryName: country.name,
++                locationCode: country.locationCode,
++                language: country.defaultLanguage,
++                languageName: country.defaultLanguageName,
++            },
++            projectName: prev.generatedCategory 
++                ? `${prev.generatedCategory.category} — ${country.name}`
++                : prev.projectName,
++        }));
++    };
++
++    const handleProceed = () => {
++        const finalProject: ProjectDefinition = {
++            ...project,
++            geo: {
++                country: selectedCountry.code,
++                countryName: selectedCountry.name,
++                locationCode: selectedCountry.locationCode,
++                language: selectedLanguage,
++                languageName: selectedCountry.languages.find(l => l.code === selectedLanguage)?.name || selectedLanguage,
++            },
++        };
++        onProjectReady(finalProject);
++    };
++
++    // --- RENDER ---
++    return (
++        <div className="max-w-4xl mx-auto px-4 pb-32">
++            {/* Header */}
++            <div className="mb-10">
++                <h1 className="text-3xl font-black text-[#0F172A] tracking-tight mb-2">New Research Project</h1>
++                <p className="text-slate-500 text-lg">Define what you want to research and where. Our AI will set up the intelligence framework.</p>
++            </div>
++
++            {/* Step Indicator */}
++            <div className="flex items-center gap-3 mb-10">
++                <div className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${step === 1 ? 'bg-blue-600 text-white shadow-lg' : 'bg-blue-50 text-blue-600'}`}>
++                    <Building2 className="w-4 h-4" />
++                    <span>1. Define Market</span>
++                </div>
++                <div className="w-8 h-px bg-slate-300" />
++                <div className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${step === 2 ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-100 text-slate-400'}`}>
++                    <Globe className="w-4 h-4" />
++                    <span>2. Geography</span>
++                </div>
++            </div>
++
++            {/* ============ STEP 1: MARKET DEFINITION ============ */}
++            {step === 1 && (
++                <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
++                    
++                    {/* Industry Selection */}
++                    <div>
++                        <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-3">Industry</label>
++                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
++                            {INDUSTRIES.map(ind => (
++                                <button
++                                    key={ind.id}
++                                    onClick={() => setSelectedIndustry(ind.id)}
++                                    className={`text-left p-3 rounded-xl border-2 transition-all ${
++                                        selectedIndustry === ind.id 
++                                            ? 'border-blue-600 bg-blue-50 shadow-md' 
++                                            : 'border-slate-200 hover:border-slate-300 bg-white'
++                                    }`}
++                                >
++                                    <div className="flex items-center gap-2 mb-1">
++                                        <span className="text-lg">{ind.icon}</span>
++                                        <span className="font-bold text-sm text-[#0F172A] leading-tight">{ind.label}</span>
++                                    </div>
++                                    <p className="text-[10px] text-slate-400 leading-tight">{ind.examples}</p>
++                                </button>
++                            ))}
++                        </div>
++                    </div>
++
++                    {/* Category Free Text */}
++                    <div>
++                        <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-3">
++                            What specific category do you want to research?
++                        </label>
++                        <div className="relative">
++                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
++                            <input
++                                type="text"
++                                value={categoryText}
++                                onChange={e => { setCategoryText(e.target.value); setGeneratedCategory(null); setGenerationError(null); }}
++                                onKeyDown={e => { if (e.key === 'Enter' && categoryText.trim() && selectedIndustry) handleGenerate(); }}
++                                placeholder="e.g. premium dog food, electric scooters, men's beard care, plant-based snacks..."
++                                className="w-full pl-12 pr-4 py-4 text-lg border-2 border-slate-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors bg-white placeholder:text-slate-300"
++                            />
++                        </div>
++                        <p className="mt-2 text-xs text-slate-400">Be specific. Include the product type, positioning (premium/mass), or target consumer if relevant.</p>
++                    </div>
++
++                    {/* Generate Button */}
++                    {selectedIndustry && categoryText.trim() && !generatedCategory && (
++                        <button
++                            onClick={handleGenerate}
++                            disabled={isGenerating}
++                            className="w-full py-4 bg-gradient-to-r from-blue-600 to-teal-500 text-white rounded-xl font-black text-sm uppercase tracking-widest hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-3 shadow-lg transition-all active:scale-[0.98]"
++                        >
++                            {isGenerating ? (
++                                <>
++                                    <Loader2 className="w-5 h-5 animate-spin" />
++                                    Generating category intelligence framework...
++                                </>
++                            ) : (
++                                <>
++                                    <Sparkles className="w-5 h-5" />
++                                    Generate Research Framework
++                                </>
++                            )}
++                        </button>
++                    )}
++
++                    {/* Generation Error */}
++                    {generationError && (
++                        <div className="p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3">
++                            <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
++                            <div>
++                                <p className="font-bold text-red-700 text-sm">Generation Failed</p>
++                                <p className="text-red-600 text-sm mt-1">{generationError}</p>
++                                <button onClick={handleGenerate} className="mt-2 text-xs font-bold text-red-700 underline">Retry</button>
++                            </div>
++                        </div>
++                    )}
++
++                    {/* Generated Category Preview */}
++                    {generatedCategory && (
++                        <div className="bg-white border-2 border-emerald-200 rounded-2xl p-6 shadow-lg animate-in fade-in slide-in-from-bottom-4 duration-500">
++                            <div className="flex items-center gap-2 mb-4">
++                                <div className="w-8 h-8 bg-emerald-100 rounded-lg flex items-center justify-center">
++                                    <Check className="w-5 h-5 text-emerald-600" />
++                                </div>
++                                <div>
++                                    <h3 className="font-black text-lg text-[#0F172A]">{generatedCategory.category}</h3>
++                                    <p className="text-xs text-emerald-600 font-bold">AI-Generated Research Framework</p>
++                                </div>
++                            </div>
++                            
++                            <p className="text-sm text-slate-600 mb-5 leading-relaxed">{generatedCategory.consumerDescription}</p>
++                            
++                            {/* Research Pillars */}
++                            <div className="mb-5">
++                                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Research Pillars</h4>
++                                <div className="flex flex-wrap gap-2">
++                                    {generatedCategory.anchors.map((a, i) => (
++                                        <span key={i} className="px-3 py-1.5 bg-blue-50 text-blue-700 text-xs font-bold rounded-lg border border-blue-100">{a}</span>
++                                    ))}
++                                </div>
++                            </div>
++
++                            {/* Sub-categories */}
++                            <div className="mb-5">
++                                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Sub-Categories</h4>
++                                <div className="space-y-2">
++                                    {generatedCategory.subCategories.map((sc, i) => (
++                                        <div key={i} className="p-3 bg-slate-50 rounded-lg">
++                                            <p className="font-bold text-sm text-slate-700 mb-1">{sc.name}</p>
++                                            <div className="flex flex-wrap gap-1.5">
++                                                {sc.anchors.map((a, j) => (
++                                                    <span key={j} className="px-2 py-0.5 bg-white text-slate-500 text-[10px] font-bold rounded border border-slate-200">{a}</span>
++                                                ))}
++                                            </div>
++                                        </div>
++                                    ))}
++                                </div>
++                            </div>
++
++                            {/* Key Brands */}
++                            <div className="mb-5">
++                                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Key Brands to Track</h4>
++                                <div className="flex flex-wrap gap-2">
++                                    {generatedCategory.keyBrands.map((b, i) => (
++                                        <span key={i} className="px-2.5 py-1 bg-amber-50 text-amber-700 text-xs font-bold rounded-lg border border-amber-100">{b}</span>
++                                    ))}
++                                </div>
++                            </div>
++
++                            {/* Seed Keywords Preview */}
++                            <div>
++                                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
++                                    Seed Keywords ({generatedCategory.defaultKeywords.length})
++                                </h4>
++                                <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
++                                    {generatedCategory.defaultKeywords.slice(0, 20).map((k, i) => (
++                                        <span key={i} className="px-2 py-0.5 bg-slate-100 text-slate-500 text-[10px] rounded">{k}</span>
++                                    ))}
++                                    {generatedCategory.defaultKeywords.length > 20 && (
++                                        <span className="px-2 py-0.5 bg-slate-200 text-slate-600 text-[10px] font-bold rounded">
++                                            +{generatedCategory.defaultKeywords.length - 20} more
++                                        </span>
++                                    )}
++                                </div>
++                            </div>
++
++                            {/* Regenerate option */}
++                            <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between">
++                                <button 
++                                    onClick={() => { setGeneratedCategory(null); }}
++                                    className="text-xs text-slate-400 hover:text-slate-600 font-bold"
++                                >
++                                    Edit category input
++                                </button>
++                                <button
++                                    onClick={handleGenerate}
++                                    disabled={isGenerating}
++                                    className="text-xs text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1"
++                                >
++                                    <Sparkles className="w-3 h-3" /> Regenerate
++                                </button>
++                            </div>
++                        </div>
++                    )}
++                </div>
++            )}
++
++            {/* ============ STEP 2: GEOGRAPHY ============ */}
++            {step === 2 && (
++                <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
++                    
++                    {/* Project Summary from Step 1 */}
++                    {generatedCategory && (
++                        <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl flex items-center gap-3">
++                            <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white flex-shrink-0">
++                                <BarChart3 className="w-5 h-5" />
++                            </div>
++                            <div>
++                                <p className="font-black text-sm text-blue-900">{generatedCategory.category}</p>
++                                <p className="text-xs text-blue-600">{generatedCategory.anchors.length} research pillars · {generatedCategory.defaultKeywords.length} seed keywords · {generatedCategory.keyBrands.length} brands</p>
++                            </div>
++                        </div>
++                    )}
++
++                    {/* Country Selection */}
++                    <div>
++                        <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-3">
++                            <MapPin className="w-3 h-3 inline mr-1" />
++                            Country / Market
++                        </label>
++                        <div className="relative">
++                            <button
++                                onClick={() => setShowCountryDropdown(!showCountryDropdown)}
++                                className="w-full flex items-center justify-between p-4 border-2 border-slate-200 rounded-xl bg-white hover:border-slate-300 transition-colors text-left"
++                            >
++                                <div className="flex items-center gap-3">
++                                    <span className="text-2xl">{selectedCountry.flag}</span>
++                                    <div>
++                                        <p className="font-bold text-[#0F172A]">{selectedCountry.name}</p>
++                                        <p className="text-xs text-slate-400">Location code: {selectedCountry.locationCode} · {selectedCountry.code}</p>
++                                    </div>
++                                </div>
++                                <ChevronDown className={`w-5 h-5 text-slate-400 transition-transform ${showCountryDropdown ? 'rotate-180' : ''}`} />
++                            </button>
++
++                            {showCountryDropdown && (
++                                <div className="absolute top-full left-0 right-0 mt-2 bg-white border-2 border-slate-200 rounded-xl shadow-xl z-50 max-h-80 overflow-y-auto">
++                                    <div className="p-3 border-b border-slate-100 sticky top-0 bg-white">
++                                        <div className="relative">
++                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
++                                            <input
++                                                type="text"
++                                                value={countrySearch}
++                                                onChange={e => setCountrySearch(e.target.value)}
++                                                placeholder="Search countries..."
++                                                className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
++                                                autoFocus
++                                            />
++                                        </div>
++                                    </div>
++                                    {filteredCountries.map(c => (
++                                        <button
++                                            key={c.code}
++                                            onClick={() => handleCountrySelect(c)}
++                                            className={`w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 transition-colors ${
++                                                selectedCountry.code === c.code ? 'bg-blue-50' : ''
++                                            }`}
++                                        >
++                                            <span className="text-xl">{c.flag}</span>
++                                            <div className="flex-1">
++                                                <p className="font-bold text-sm text-[#0F172A]">{c.name}</p>
++                                                <p className="text-[10px] text-slate-400">{c.languages.map(l => l.name).join(', ')}</p>
++                                            </div>
++                                            {selectedCountry.code === c.code && <Check className="w-4 h-4 text-blue-600" />}
++                                        </button>
++                                    ))}
++                                </div>
++                            )}
++                        </div>
++                    </div>
++
++                    {/* Language Selection */}
++                    <div>
++                        <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-3">
++                            <Languages className="w-3 h-3 inline mr-1" />
++                            Research Language
++                        </label>
++                        <div className="flex flex-wrap gap-2">
++                            {selectedCountry.languages.map(lang => (
++                                <button
++                                    key={lang.code}
++                                    onClick={() => setSelectedLanguage(lang.code)}
++                                    className={`px-4 py-3 rounded-xl border-2 font-bold text-sm transition-all ${
++                                        selectedLanguage === lang.code
++                                            ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-md'
++                                            : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
++                                    }`}
++                                >
++                                    {lang.name}
++                                    {lang.code === selectedCountry.defaultLanguage && (
++                                        <span className="ml-2 text-[10px] text-slate-400 font-normal">Default</span>
++                                    )}
++                                </button>
++                            ))}
++                        </div>
++                        <p className="mt-2 text-xs text-slate-400">This affects keyword research language and signal interpretation.</p>
++                    </div>
++
++                    {/* Project Summary */}
++                    <div className="p-5 bg-slate-50 border border-slate-200 rounded-xl">
++                        <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Project Summary</h4>
++                        <div className="space-y-2">
++                            <div className="flex justify-between text-sm">
++                                <span className="text-slate-500">Category</span>
++                                <span className="font-bold text-[#0F172A]">{generatedCategory?.category || '—'}</span>
++                            </div>
++                            <div className="flex justify-between text-sm">
++                                <span className="text-slate-500">Market</span>
++                                <span className="font-bold text-[#0F172A]">{selectedCountry.flag} {selectedCountry.name}</span>
++                            </div>
++                            <div className="flex justify-between text-sm">
++                                <span className="text-slate-500">Language</span>
++                                <span className="font-bold text-[#0F172A]">{selectedCountry.languages.find(l => l.code === selectedLanguage)?.name}</span>
++                            </div>
++                            <div className="flex justify-between text-sm">
++                                <span className="text-slate-500">Research Pillars</span>
++                                <span className="font-bold text-[#0F172A]">{generatedCategory?.anchors.length || 0}</span>
++                            </div>
++                            <div className="flex justify-between text-sm">
++                                <span className="text-slate-500">Seed Keywords</span>
++                                <span className="font-bold text-[#0F172A]">{generatedCategory?.defaultKeywords.length || 0}</span>
++                            </div>
++                        </div>
++                    </div>
++                </div>
++            )}
++
++            {/* ============ BOTTOM BAR ============ */}
++            <div className="fixed bottom-0 left-0 right-0 p-4 bg-white/90 backdrop-blur-md border-t border-slate-200 flex justify-between items-center z-40 shadow-[0_-4px_12px_rgba(0,0,0,0.05)]">
++                <div>
++                    {step === 2 && (
++                        <button
++                            onClick={() => setStep(1)}
++                            className="flex items-center gap-2 text-slate-500 hover:text-slate-700 font-bold text-sm"
++                        >
++                            <ArrowLeft className="w-4 h-4" /> Back to Market
++                        </button>
++                    )}
++                </div>
++                
++                <div className="flex items-center gap-4">
++                    {step === 1 && generatedCategory && (
++                        <button
++                            onClick={() => setStep(2)}
++                            className="bg-blue-600 text-white px-8 py-3 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-blue-700 flex items-center gap-2 shadow-lg transition-all active:scale-95"
++                        >
++                            Next: Geography <ArrowRight className="w-4 h-4" />
++                        </button>
++                    )}
++                    
++                    {step === 2 && (
++                        <button
++                            onClick={handleProceed}
++                            disabled={!generatedCategory}
++                            className="bg-gradient-to-r from-blue-600 to-teal-500 text-white px-8 py-3 rounded-xl font-black text-xs uppercase tracking-widest hover:opacity-90 disabled:opacity-50 flex items-center gap-2 shadow-lg transition-all active:scale-95"
++                        >
++                            <Sparkles className="w-4 h-4" /> Launch Project <ArrowRight className="w-4 h-4" />
++                        </button>
++                    )}
++                </div>
++            </div>
++        </div>
++    );
++};
+diff --git a/src/services/categoryGenerationService.ts b/src/services/categoryGenerationService.ts
+new file mode 100644
+index 0000000..aa7310d
+--- /dev/null
++++ b/src/services/categoryGenerationService.ts
+@@ -0,0 +1,142 @@
++/**
++ * Category Generation Service
++ * 
++ * Takes a free-text category description + geography context and uses Gemini
++ * to generate a full CategoryBaseline-compatible config (anchors, sub-categories,
++ * seed keywords, key brands).
++ * 
++ * This replaces the need for hardcoded CORE_CATEGORIES for new projects.
++ */
++
++import { GoogleGenAI } from "@google/genai";
++import { AiGeneratedCategory, IndustryId } from '../config/projectContext';
++
++const MODEL = 'gemini-2.5-flash-preview-05-20';
++
++function getApiKey(): string | undefined {
++    if (typeof process !== 'undefined' && process.env?.API_KEY) return process.env.API_KEY;
++    if ((import.meta as any).env?.VITE_GOOGLE_API_KEY) return (import.meta as any).env.VITE_GOOGLE_API_KEY;
++    if ((import.meta as any).env?.VITE_GEMINI_API_KEY) return (import.meta as any).env.VITE_GEMINI_API_KEY;
++    return undefined;
++}
++
++function safeParseJSON(input: string): any {
++    if (!input) return null;
++    let cleaned = input.replace(/```json/gi, "").replace(/```/g, "").trim();
++    try { return JSON.parse(cleaned); } catch (e) { return null; }
++}
++
++function slugify(text: string): string {
++    return text
++        .toLowerCase()
++        .replace(/[^a-z0-9\s-]/g, '')
++        .replace(/\s+/g, '-')
++        .replace(/-+/g, '-')
++        .substring(0, 40)
++        .replace(/^-|-$/g, '');
++}
++
++export interface CategoryGenerationInput {
++    categoryText: string;     // "premium dog food", "electric two-wheelers", etc.
++    industry: IndustryId;
++    countryName: string;
++    countryCode: string;
++    language: string;
++}
++
++export interface CategoryGenerationResult {
++    ok: boolean;
++    category?: AiGeneratedCategory;
++    error?: string;
++    rawResponse?: string;
++}
++
++export async function generateCategoryConfig(
++    input: CategoryGenerationInput
++): Promise<CategoryGenerationResult> {
++    const apiKey = getApiKey();
++    if (!apiKey) {
++        return { ok: false, error: "Gemini API key not configured." };
++    }
++
++    const ai = new GoogleGenAI({ apiKey });
++
++    const prompt = `You are a Category Intelligence Architect for consumer and market research.
++
++A user wants to set up a research project for the following:
++- Category: "${input.categoryText}"
++- Industry: ${input.industry}
++- Country/Market: ${input.countryName} (${input.countryCode})
++- Language: ${input.language}
++
++Your task is to generate a complete category research configuration. Think like a senior research consultant at Nielsen, Kantar, or McKinsey setting up a category deep-dive.
++
++Generate STRICT JSON with this exact schema:
++{
++    "category": "<Clean, professional category name — e.g. 'Premium Dog Food', 'Electric Two-Wheelers', 'Men's Face Care'>",
++    "consumerDescription": "<2-3 sentence description of what this category means to consumers in ${input.countryName}. What problem does it solve? What aspiration does it serve?>",
++    "anchors": ["<5-8 strategic research pillars/themes for this category — e.g. 'Product Performance & Quality', 'Price & Value Perception', 'Brand Trust & Loyalty', 'Purchase Channels', 'Emerging Trends'>"],
++    "subCategories": [
++        {
++            "name": "<Sub-category group name>",
++            "anchors": ["<3-6 specific research anchors within this sub-category>"]
++        }
++    ],
++    "defaultKeywords": ["<20-30 high-relevance consumer search keywords for this category in ${input.countryName}. Mix of branded, generic, problem-solution, and comparison queries. Must be terms real consumers would type into Google in ${input.language}.>"],
++    "keyBrands": ["<8-15 key brands competing in this category in ${input.countryName}. Include both market leaders and notable challengers/D2C brands.>"]
++}
++
++RULES:
++1. Sub-categories: Generate 2-4 meaningful sub-category groups, each with 3-6 anchors.
++2. Keywords: Must be realistic search queries in ${input.language} for ${input.countryName}. Include "best", "vs", "review", "price", "buy" variations. No generic filler.
++3. Brands: Only include brands actually available/relevant in ${input.countryName}. Do NOT include global brands that don't operate there.
++4. Anchors: Should be strategic research themes, not product features. Think: "Purchase Decision Journey", "Sustainability Concerns", "Digital vs Offline Channel Mix".
++5. Be specific to ${input.countryName} — pricing in local currency context, local platforms (e.g. Flipkart/Amazon.in for India, Amazon.com for US), local consumer behaviours.
++
++Output ONLY the JSON. No markdown, no explanations.`;
++
++    try {
++        const response = await ai.models.generateContent({
++            model: MODEL,
++            contents: prompt,
++        });
++
++        const raw = response?.text || '';
++        const parsed = safeParseJSON(raw);
++
++        if (!parsed || !parsed.category || !parsed.anchors || !parsed.defaultKeywords) {
++            return { 
++                ok: false, 
++                error: "AI generated invalid structure. Missing required fields.", 
++                rawResponse: raw.substring(0, 500) 
++            };
++        }
++
++        // Validate minimum quality
++        if (parsed.anchors.length < 3) {
++            return { ok: false, error: "AI generated too few anchors (need at least 3).", rawResponse: raw.substring(0, 500) };
++        }
++        if (parsed.defaultKeywords.length < 10) {
++            return { ok: false, error: "AI generated too few keywords (need at least 10).", rawResponse: raw.substring(0, 500) };
++        }
++
++        const category: AiGeneratedCategory = {
++            id: slugify(parsed.category),
++            category: parsed.category,
++            consumerDescription: parsed.consumerDescription || '',
++            anchors: parsed.anchors || [],
++            subCategories: (parsed.subCategories || []).map((sc: any) => ({
++                name: sc.name || 'General',
++                anchors: sc.anchors || [],
++            })),
++            defaultKeywords: parsed.defaultKeywords || [],
++            keyBrands: parsed.keyBrands || [],
++            generatedAt: new Date().toISOString(),
++        };
++
++        return { ok: true, category };
++
++    } catch (e: any) {
++        return { ok: false, error: `Gemini API error: ${e.message}` };
++    }
++}
+-- 
+2.43.0
+
