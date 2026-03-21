@@ -9,7 +9,7 @@
 import { GoogleGenAI } from "@google/genai";
 import { AiGeneratedCategory, IndustryId } from '../config/projectContext';
 
-const MODEL = 'gemini-3-flash-preview';
+const MODEL = 'gemini-3-pro-preview';
 
 function getApiKey(): string | undefined {
     if (typeof process !== 'undefined' && process.env?.API_KEY) return process.env.API_KEY;

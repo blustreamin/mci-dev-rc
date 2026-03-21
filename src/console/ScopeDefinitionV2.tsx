@@ -34,12 +34,13 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
     const [isGenerating, setIsGenerating] = useState(false);
     const [generationError, setGenerationError] = useState<string | null>(null);
     const [generatedCategory, setGeneratedCategory] = useState<AiGeneratedCategory | null>(null);
+    const [genTelemetry, setGenTelemetry] = useState<string[]>([]);
     
     // Step 2 state
     const [countrySearch, setCountrySearch] = useState('');
     const [showCountryDropdown, setShowCountryDropdown] = useState(false);
     const [selectedCountry, setSelectedCountry] = useState<CountryOption>(COUNTRIES[0]); // Default: India
-    const [selectedLanguage, setSelectedLanguage] = useState('en');
+    const [selectedLanguages, setSelectedLanguages] = useState<Set<string>>(new Set(['en']));
 
     // --- STEP 1: AI Category Generation ---
     const handleGenerate = async () => {
@@ -48,16 +49,25 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
         setIsGenerating(true);
         setGenerationError(null);
         setGeneratedCategory(null);
+        setGenTelemetry(['Initializing Gemini 3 Pro...']);
+
+        const langNames = Array.from(selectedLanguages)
+            .map(code => selectedCountry.languages.find(l => l.code === code)?.name || code)
+            .join(', ');
+
+        setGenTelemetry(prev => [...prev, `Market: ${selectedCountry.name} | Languages: ${langNames}`]);
+        setGenTelemetry(prev => [...prev, 'Call 1/4: Generating category structure + 200 seed keywords...']);
 
         const result = await generateCategoryConfig({
             categoryText: categoryText.trim(),
             industry: selectedIndustry,
             countryName: selectedCountry.name,
             countryCode: selectedCountry.code,
-            language: selectedCountry.languages.find(l => l.code === selectedLanguage)?.name || 'English',
+            language: langNames,
         });
 
         if (result.ok && result.category) {
+            setGenTelemetry(prev => [...prev, `Done: ${result.category!.defaultKeywords.length} keywords | ${result.category!.anchors.length} anchors | ${result.category!.keyBrands.length} brands`]);
             setGeneratedCategory(result.category);
             setProject(prev => ({
                 ...prev,
@@ -68,6 +78,7 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
                 status: 'READY',
             }));
         } else {
+            setGenTelemetry(prev => [...prev, `FAILED: ${result.error}`]);
             setGenerationError(result.error || 'Generation failed. Please try again.');
         }
         
@@ -82,7 +93,7 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
 
     const handleCountrySelect = (country: CountryOption) => {
         setSelectedCountry(country);
-        setSelectedLanguage(country.defaultLanguage);
+        setSelectedLanguages(new Set([country.defaultLanguage]));
         setShowCountryDropdown(false);
         setCountrySearch('');
         
@@ -96,6 +107,7 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
                 locationCode: country.locationCode,
                 language: country.defaultLanguage,
                 languageName: country.defaultLanguageName,
+                languages: country.languages.filter(l => l.code === country.defaultLanguage),
             },
             projectName: prev.generatedCategory 
                 ? `${prev.generatedCategory.category} — ${country.name}`
@@ -104,14 +116,18 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
     };
 
     const handleProceed = async () => {
+        const primaryLang = Array.from(selectedLanguages)[0] || selectedCountry.defaultLanguage;
+        const selectedLangObjects = selectedCountry.languages.filter(l => selectedLanguages.has(l.code));
+        
         const finalProject: ProjectDefinition = {
             ...project,
             geo: {
                 country: selectedCountry.code,
                 countryName: selectedCountry.name,
                 locationCode: selectedCountry.locationCode,
-                language: selectedLanguage,
-                languageName: selectedCountry.languages.find(l => l.code === selectedLanguage)?.name || selectedLanguage,
+                language: primaryLang,
+                languageName: selectedCountry.languages.find(l => l.code === primaryLang)?.name || primaryLang,
+                languages: selectedLangObjects,
             },
         };
         
@@ -230,23 +246,47 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
 
                     {/* Generate Button */}
                     {selectedIndustry && categoryText.trim() && !generatedCategory && (
-                        <button
-                            onClick={handleGenerate}
-                            disabled={isGenerating}
-                            className="w-full py-4 bg-gradient-to-r from-blue-600 to-teal-500 text-white rounded-xl font-black text-sm uppercase tracking-widest hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-3 shadow-lg transition-all active:scale-[0.98]"
-                        >
-                            {isGenerating ? (
-                                <>
-                                    <Loader2 className="w-5 h-5 animate-spin" />
-                                    Generating category intelligence framework...
-                                </>
-                            ) : (
-                                <>
-                                    <Sparkles className="w-5 h-5" />
-                                    Generate Research Framework
-                                </>
+                        <div>
+                            <button
+                                onClick={handleGenerate}
+                                disabled={isGenerating}
+                                className="w-full py-4 bg-gradient-to-r from-blue-600 to-teal-500 text-white rounded-xl font-black text-sm uppercase tracking-widest hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-3 shadow-lg transition-all active:scale-[0.98]"
+                            >
+                                {isGenerating ? (
+                                    <>
+                                        <Loader2 className="w-5 h-5 animate-spin" />
+                                        Generating Category Intelligence Framework...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Sparkles className="w-5 h-5" />
+                                        Generate Research Framework
+                                    </>
+                                )}
+                            </button>
+                            
+                            {/* Telemetry Panel */}
+                            {genTelemetry.length > 0 && (
+                                <div className="mt-3 bg-slate-900 rounded-xl p-4 font-mono text-[11px] text-slate-300 max-h-40 overflow-y-auto">
+                                    <div className="flex items-center gap-2 mb-2 text-[9px] font-black uppercase tracking-widest text-slate-500">
+                                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                        Generation Telemetry
+                                    </div>
+                                    {genTelemetry.map((line, i) => (
+                                        <div key={i} className={`py-0.5 ${line.includes('FAILED') ? 'text-red-400' : line.includes('Done') ? 'text-emerald-400' : 'text-slate-400'}`}>
+                                            <span className="text-slate-600 mr-2">{String(i + 1).padStart(2, '0')}</span>
+                                            {line}
+                                        </div>
+                                    ))}
+                                    {isGenerating && (
+                                        <div className="py-0.5 text-indigo-400 animate-pulse flex items-center gap-2">
+                                            <Loader2 className="w-3 h-3 animate-spin" />
+                                            Processing...
+                                        </div>
+                                    )}
+                                </div>
                             )}
-                        </button>
+                        </div>
                     )}
 
                     {/* Generation Error */}
@@ -425,31 +465,45 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
                         </div>
                     </div>
 
-                    {/* Language Selection */}
+                    {/* Language Selection (Multi) */}
                     <div>
                         <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-3">
                             <Languages className="w-3 h-3 inline mr-1" />
-                            Research Language
+                            Research Languages <span className="text-slate-400 font-normal">(select all that apply)</span>
                         </label>
                         <div className="flex flex-wrap gap-2">
-                            {selectedCountry.languages.map(lang => (
-                                <button
-                                    key={lang.code}
-                                    onClick={() => setSelectedLanguage(lang.code)}
-                                    className={`px-4 py-3 rounded-xl border-2 font-bold text-sm transition-all ${
-                                        selectedLanguage === lang.code
-                                            ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-md'
-                                            : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-                                    }`}
-                                >
-                                    {lang.name}
-                                    {lang.code === selectedCountry.defaultLanguage && (
-                                        <span className="ml-2 text-[10px] text-slate-400 font-normal">Default</span>
-                                    )}
-                                </button>
-                            ))}
+                            {selectedCountry.languages.map(lang => {
+                                const isSelected = selectedLanguages.has(lang.code);
+                                return (
+                                    <button
+                                        key={lang.code}
+                                        onClick={() => {
+                                            setSelectedLanguages(prev => {
+                                                const next = new Set(prev);
+                                                if (isSelected && next.size > 1) {
+                                                    next.delete(lang.code);
+                                                } else {
+                                                    next.add(lang.code);
+                                                }
+                                                return next;
+                                            });
+                                        }}
+                                        className={`px-4 py-3 rounded-xl border-2 font-bold text-sm transition-all ${
+                                            isSelected
+                                                ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-md'
+                                                : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                                        }`}
+                                    >
+                                        {isSelected && <span className="mr-1.5">✓</span>}
+                                        {lang.name}
+                                        {lang.code === selectedCountry.defaultLanguage && (
+                                            <span className="ml-2 text-[10px] text-slate-400 font-normal">Primary</span>
+                                        )}
+                                    </button>
+                                );
+                            })}
                         </div>
-                        <p className="mt-2 text-xs text-slate-400">This affects keyword research language and signal interpretation.</p>
+                        <p className="mt-2 text-xs text-slate-400">Keywords will be generated across all selected languages. Primary language is used for DFS volume lookup.</p>
                     </div>
 
                     {/* Project Summary */}
@@ -465,8 +519,8 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
                                 <span className="font-bold text-[#0F172A]">{selectedCountry.flag} {selectedCountry.name}</span>
                             </div>
                             <div className="flex justify-between text-sm">
-                                <span className="text-slate-500">Language</span>
-                                <span className="font-bold text-[#0F172A]">{selectedCountry.languages.find(l => l.code === selectedLanguage)?.name}</span>
+                                <span className="text-slate-500">Languages</span>
+                                <span className="font-bold text-[#0F172A]">{Array.from(selectedLanguages).map(code => selectedCountry.languages.find(l => l.code === code)?.name || code).join(', ')}</span>
                             </div>
                             <div className="flex justify-between text-sm">
                                 <span className="text-slate-500">Research Pillars</span>

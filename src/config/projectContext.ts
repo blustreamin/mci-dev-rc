@@ -15,8 +15,9 @@ export interface GeoConfig {
     country: string;           // ISO 2-letter: 'IN', 'US', 'GB', 'AE', etc.
     countryName: string;       // 'India', 'United States', etc.
     locationCode: number;      // DataForSEO location code: 2356, 2840, etc.
-    language: string;          // ISO: 'en', 'hi', 'ar', etc.
-    languageName: string;      // 'English', 'Hindi', etc.
+    language: string;          // Primary ISO: 'en', 'hi', 'ar', etc.
+    languageName: string;      // Primary: 'English', 'Hindi', etc.
+    languages?: { code: string; name: string }[];  // All selected languages for multi-language research
     marketTier?: string;       // Optional: 'All', 'Metro/Tier 1', 'Tier 2', 'Tier 3'
 }
 
