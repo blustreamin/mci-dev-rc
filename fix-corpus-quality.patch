@@ -1,0 +1,193 @@
+diff --git a/src/App.tsx b/src/App.tsx
+index daa06e8..c85bf98 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -75,16 +75,17 @@ const AppInner: React.FC = () => {
+         }
+         setActiveGear('STRATEGY');
+ 
+-        // Auto-trigger corpus build in background (non-blocking)
++        // Auto-trigger DFS corpus build in background (non-blocking)
++        // forceRebuild=true because ScopeV2 writes an UNVERIFIED seed corpus that needs DFS volumes
+         import('./services/projectCorpusBuilder').then(({ ProjectCorpusBuilder }) => {
+-            console.log(`[App] Auto-triggering corpus build for project: ${project.projectName}`);
+-            ProjectCorpusBuilder.buildCorpus(project, { forceRebuild: false }, (progress) => {
++            console.log(`[App] Auto-triggering DFS corpus build for project: ${project.projectName}`);
++            ProjectCorpusBuilder.buildCorpus(project, { forceRebuild: true }, (progress) => {
+                 console.log(`[CorpusBuild] ${progress.phase}: ${progress.message}`);
+             }).then(result => {
+                 if (result.ok) {
+-                    console.log(`[App] Corpus built: ${result.totalRows} rows (${result.validRows} valid) in ${(result.elapsedMs / 1000).toFixed(1)}s`);
++                    console.log(`[App] Corpus built: ${result.totalRows} rows (${result.validRows} valid, ${result.discoveredCount} discovered) in ${(result.elapsedMs / 1000).toFixed(1)}s`);
+                 } else {
+-                    console.warn(`[App] Corpus build failed: ${result.error}`);
++                    console.warn(`[App] Corpus build failed: ${result.error} — seed corpus still available`);
+                 }
+             });
+         });
+diff --git a/src/console/CorpusInspectorView.tsx b/src/console/CorpusInspectorView.tsx
+index cd15977..6b76749 100644
+--- a/src/console/CorpusInspectorView.tsx
++++ b/src/console/CorpusInspectorView.tsx
+@@ -326,7 +326,7 @@ const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
+             const volB = b.volume ?? 0;
+             if (volB !== volA) return volB - volA;
+             // Secondary: Keyword Text ASC
+-            return a.keyword_text.localeCompare(b.keyword_text);
++            return (a.keyword_text || '').localeCompare(b.keyword_text || '');
+         });
+     }, [rows]);
+ 
+@@ -358,7 +358,11 @@ const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
+                     setLoading(false);
+                     return;
+                 }
+-                log(`[CORPUS_INSPECTOR][PLATFORMDB] No corpus in IndexedDB, falling back to Firestore...`);
++                log(`[CORPUS_INSPECTOR][PLATFORMDB] No corpus in IndexedDB. Use Build Corpus button.`);
++                setError('No corpus data yet. Click "Build Corpus" to fetch keyword volumes from DataForSEO.');
++                setRows([]);
++                setLoading(false);
++                return;
+             }
+ 
+             // LEGACY MODE: Resolve from Firestore snapshot
+diff --git a/src/console/ScopeDefinitionV2.tsx b/src/console/ScopeDefinitionV2.tsx
+index bd61c81..e817ef9 100644
+--- a/src/console/ScopeDefinitionV2.tsx
++++ b/src/console/ScopeDefinitionV2.tsx
+@@ -24,6 +24,14 @@ interface ScopeDefinitionV2Props {
+     onProjectReady: (project: ProjectDefinition) => void;
+ }
+ 
++function classifyKeywordIntent(kw: string): string {
++    const k = kw.toLowerCase();
++    if (/\b(buy|price|cost|cheap|affordable|deal|offer|discount|shop|order|where to buy|near me|online)\b/.test(k)) return 'TRANSACTIONAL';
++    if (/\b(best|top|vs|versus|compare|comparison|review|rating|recommend|which)\b/.test(k)) return 'COMMERCIAL';
++    if (/\b(how|what|why|when|guide|tutorial|tips|does|can|should|is it|benefits|difference)\b/.test(k)) return 'INFORMATIONAL';
++    return 'NAVIGATIONAL';
++}
++
+ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectReady }) => {
+     const [step, setStep] = useState<1 | 2>(1);
+     const [project, setProject] = useState<ProjectDefinition>(createDefaultProject());
+@@ -121,18 +129,25 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
+             await PlatformDB.saveProject(finalProject);
+             if (finalProject.generatedCategory) {
+                 await PlatformDB.saveCategory(finalProject.generatedCategory.id, finalProject.generatedCategory);
+-                // Pre-build corpus from generated keywords
++                // Pre-build corpus skeleton from generated keywords (UNVERIFIED — DFS will overwrite)
+                 const corpus = finalProject.generatedCategory.defaultKeywords.map((kw, idx) => ({
+-                    keyword_id: `gen_${idx}`,
+-                    keyword: kw,
+-                    volume: 0,
+-                    anchor_id: finalProject.generatedCategory!.anchors[idx % finalProject.generatedCategory!.anchors.length],
+-                    intent_bucket: 'Discovery',
+-                    status: 'active',
+-                    active: true
++                    keyword_id: `seed_${finalProject.generatedCategory!.id}__${idx}`,
++                    keyword_text: kw,
++                    volume: null,
++                    cpc: undefined,
++                    competition: undefined,
++                    anchor_id: finalProject.generatedCategory!.subCategories[idx % finalProject.generatedCategory!.subCategories.length]?.name?.toLowerCase().replace(/\s+/g, '_').substring(0, 30) || 'general',
++                    intent_bucket: classifyKeywordIntent(kw),
++                    status: 'UNVERIFIED',
++                    active: false,
++                    language_code: finalProject.geo.language,
++                    country_code: finalProject.geo.country,
++                    category_id: finalProject.generatedCategory!.id,
++                    created_at_iso: new Date().toISOString(),
++                    validation_tier: 'AI_SEED_PENDING_DFS',
+                 }));
+                 await PlatformDB.saveCorpus(finalProject.generatedCategory.id, corpus);
+-                console.log(`[ScopeV2] Persisted project + corpus (${corpus.length} keywords) to IndexedDB`);
++                console.log(`[ScopeV2] Persisted project + seed corpus (${corpus.length} keywords, UNVERIFIED) to IndexedDB`);
+             }
+         } catch (e) {
+             console.warn('[ScopeV2] IndexedDB persist failed, continuing anyway', e);
+diff --git a/src/services/categoryGenerationService.ts b/src/services/categoryGenerationService.ts
+index bda40ac..cc0e205 100644
+--- a/src/services/categoryGenerationService.ts
++++ b/src/services/categoryGenerationService.ts
+@@ -61,7 +61,7 @@ export async function generateCategoryConfig(
+ 
+     const ai = new GoogleGenAI({ apiKey });
+ 
+-    const prompt = `You are a Category Intelligence Architect for consumer and market research.
++    const prompt = `You are a Category Intelligence Architect for consumer and market research. You work at the intersection of Nielsen/Kantar category analysis and Google Ads keyword planning.
+ 
+ A user wants to set up a research project for the following:
+ - Category: "${input.categoryText}"
+@@ -69,29 +69,47 @@ A user wants to set up a research project for the following:
+ - Country/Market: ${input.countryName} (${input.countryCode})
+ - Language: ${input.language}
+ 
+-Your task is to generate a complete category research configuration. Think like a senior research consultant at Nielsen, Kantar, or McKinsey setting up a category deep-dive.
++Your task is to generate a complete category research configuration with a LARGE, HIGH-QUALITY keyword corpus that will be validated against real search volume data (DataForSEO/Google Ads).
+ 
+ Generate STRICT JSON with this exact schema:
+ {
+-    "category": "<Clean, professional category name — e.g. 'Premium Dog Food', 'Electric Two-Wheelers', 'Men's Face Care'>",
+-    "consumerDescription": "<2-3 sentence description of what this category means to consumers in ${input.countryName}. What problem does it solve? What aspiration does it serve?>",
+-    "anchors": ["<5-8 strategic research pillars/themes for this category — e.g. 'Product Performance & Quality', 'Price & Value Perception', 'Brand Trust & Loyalty', 'Purchase Channels', 'Emerging Trends'>"],
++    "category": "<Clean, professional category name>",
++    "consumerDescription": "<2-3 sentence description of what this category means to consumers in ${input.countryName}>",
++    "anchors": ["<6-10 strategic research pillars — e.g. 'Product Performance & Quality', 'Price & Value Perception', 'Brand Trust & Loyalty', 'Purchase Channels', 'Emerging Trends', 'Health & Safety Concerns'>"],
+     "subCategories": [
+         {
+-            "name": "<Sub-category group name>",
+-            "anchors": ["<3-6 specific research anchors within this sub-category>"]
++            "name": "<Sub-category name>",
++            "anchors": ["<4-8 specific research anchors within this sub-category>"]
+         }
+     ],
+-    "defaultKeywords": ["<50-80 high-relevance consumer search keywords for this category in ${input.countryName}. Mix of branded, generic, problem-solution, comparison, and purchase-intent queries. Must be terms real consumers would type into Google in ${input.language}. Include long-tail queries (3-5 words) not just head terms.>"],
+-    "keyBrands": ["<8-15 key brands competing in this category in ${input.countryName}. Include both market leaders and notable challengers/D2C brands.>"]
++    "defaultKeywords": [
++        "<GENERATE 200-250 KEYWORDS. This is critical — these will be validated against Google Ads search volume data. Every keyword must be a realistic search query that real consumers in ${input.countryName} would type into Google in ${input.language}.>"
++    ],
++    "keyBrands": ["<10-20 brands competing in this category in ${input.countryName}>"]
+ }
+ 
+-RULES:
+-1. Sub-categories: Generate 2-4 meaningful sub-category groups, each with 3-6 anchors.
+-2. Keywords: Must be realistic search queries in ${input.language} for ${input.countryName}. Include "best", "vs", "review", "price", "buy" variations. No generic filler.
+-3. Brands: Only include brands actually available/relevant in ${input.countryName}. Do NOT include global brands that don't operate there.
+-4. Anchors: Should be strategic research themes, not product features. Think: "Purchase Decision Journey", "Sustainability Concerns", "Digital vs Offline Channel Mix".
+-5. Be specific to ${input.countryName} — pricing in local currency context, local platforms (e.g. Flipkart/Amazon.in for India, Amazon.com for US), local consumer behaviours.
++KEYWORD GENERATION RULES (CRITICAL — READ CAREFULLY):
++1. Generate EXACTLY 200-250 keywords. Not 50. Not 80. TWO HUNDRED minimum.
++2. Every keyword must be a search query a real person would type into Google. NOT research themes, NOT anchor names, NOT category descriptions.
++3. Mix these intent types across all keywords:
++   - TRANSACTIONAL (30%): "buy [product] online", "[brand] price", "[product] discount", "best deals on [product]", "[product] on amazon", "[product] near me"
++   - COMMERCIAL (30%): "best [product] in ${input.countryName}", "[brand] vs [brand]", "[product] review", "top 10 [product]", "[product] comparison", "which [product] is best"
++   - INFORMATIONAL (25%): "how to choose [product]", "is [product] good for [use case]", "[product] benefits", "difference between [type] and [type]", "[product] side effects"
++   - NAVIGATIONAL (15%): "[brand name] [product]", "[brand] official site", "[brand] [product] buy online"
++4. Include keyword length variety:
++   - Head terms (1-2 words): 20% — e.g. "paneer", "malai paneer"
++   - Mid-tail (3-4 words): 50% — e.g. "best paneer brand india", "paneer price per kg"
++   - Long-tail (5+ words): 30% — e.g. "how to identify fresh paneer at home", "best paneer for making butter masala"
++5. Include brand-specific queries for EACH key brand (e.g. "[Brand] paneer price", "[Brand] paneer review", "is [Brand] paneer good")
++6. Include comparison queries: "[Brand A] vs [Brand B]", "[Product type A] vs [Product type B]"
++7. Include problem-solution queries: "[problem] solution", "how to fix [issue]", "[product] for [specific need]"
++8. Include seasonal/occasion queries if relevant: "[product] for [festival/occasion]", "[product] summer/winter"
++9. Include price-related queries: "[product] price", "cheap [product]", "premium [product]", "[product] under [amount]"
++10. Be specific to ${input.countryName} — use local language terms, local platforms (Flipkart/Amazon.in for India), local currency, local cultural context.
++11. NO duplicate keywords. NO generic filler like "product" or "thing". Every keyword must be specific and searchable.
++
++Sub-categories: Generate 3-6 meaningful sub-category groups, each with 4-8 research anchors.
++Brands: Only include brands actually available in ${input.countryName}. Include market leaders AND D2C/challenger brands.
+ 
+ Output ONLY the JSON. No markdown, no explanations.`;
+ 
+@@ -116,8 +134,8 @@ Output ONLY the JSON. No markdown, no explanations.`;
+         if (parsed.anchors.length < 3) {
+             return { ok: false, error: "AI generated too few anchors (need at least 3).", rawResponse: raw.substring(0, 500) };
+         }
+-        if (parsed.defaultKeywords.length < 20) {
+-            return { ok: false, error: "AI generated too few keywords (need at least 20).", rawResponse: raw.substring(0, 500) };
++        if (parsed.defaultKeywords.length < 100) {
++            return { ok: false, error: `AI generated too few keywords (${parsed.defaultKeywords.length}, need at least 100). Retrying may help.`, rawResponse: raw.substring(0, 500) };
+         }
+ 
+         const category: AiGeneratedCategory = {
