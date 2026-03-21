@@ -326,7 +326,7 @@ const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
             const volB = b.volume ?? 0;
             if (volB !== volA) return volB - volA;
             // Secondary: Keyword Text ASC
-            return a.keyword_text.localeCompare(b.keyword_text);
+            return (a.keyword_text || '').localeCompare(b.keyword_text || '');
         });
     }, [rows]);
 
@@ -358,7 +358,11 @@ const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
                     setLoading(false);
                     return;
                 }
-                log(`[CORPUS_INSPECTOR][PLATFORMDB] No corpus in IndexedDB, falling back to Firestore...`);
+                log(`[CORPUS_INSPECTOR][PLATFORMDB] No corpus in IndexedDB. Use Build Corpus button.`);
+                setError('No corpus data yet. Click "Build Corpus" to fetch keyword volumes from DataForSEO.');
+                setRows([]);
+                setLoading(false);
+                return;
             }
 
             // LEGACY MODE: Resolve from Firestore snapshot
