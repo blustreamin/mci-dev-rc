@@ -17,7 +17,7 @@ import {
     INDUSTRIES, COUNTRIES, IndustryId, CountryOption,
     ProjectDefinition, createDefaultProject, GeoConfig
 } from '../config/projectContext';
-import { generateCategoryConfig } from '../services/categoryGenerationService';
+import { generateCategoryConfig, GenerationProgress } from '../services/categoryGenerationService';
 import { AiGeneratedCategory } from '../config/projectContext';
 
 interface ScopeDefinitionV2Props {
@@ -35,6 +35,7 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
     const [generationError, setGenerationError] = useState<string | null>(null);
     const [generatedCategory, setGeneratedCategory] = useState<AiGeneratedCategory | null>(null);
     const [genTelemetry, setGenTelemetry] = useState<string[]>([]);
+    const [genProgress, setGenProgress] = useState<GenerationProgress | null>(null);
     
     // Step 2 state
     const [countrySearch, setCountrySearch] = useState('');
@@ -49,14 +50,14 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
         setIsGenerating(true);
         setGenerationError(null);
         setGeneratedCategory(null);
-        setGenTelemetry(['Initializing Gemini 3 Pro...']);
+        setGenProgress(null);
+        setGenTelemetry([]);
 
         const langNames = Array.from(selectedLanguages)
             .map(code => selectedCountry.languages.find(l => l.code === code)?.name || code)
             .join(', ');
 
         setGenTelemetry(prev => [...prev, `Market: ${selectedCountry.name} | Languages: ${langNames}`]);
-        setGenTelemetry(prev => [...prev, 'Call 1/4: Generating category structure + 300 seed keywords...']);
 
         const result = await generateCategoryConfig({
             categoryText: categoryText.trim(),
@@ -64,6 +65,15 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
             countryName: selectedCountry.name,
             countryCode: selectedCountry.code,
             language: langNames,
+        }, (progress) => {
+            setGenProgress(progress);
+            setGenTelemetry(prev => {
+                const line = `[${progress.step}/${progress.totalSteps}] ${progress.phase}`;
+                if (prev.length > 0 && prev[prev.length - 1].startsWith(`[${progress.step}/`)) {
+                    return [...prev.slice(0, -1), line];
+                }
+                return [...prev, line];
+            });
         });
 
         if (result.ok && result.category) {
@@ -335,25 +345,43 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
                                 )}
                             </button>
                             
-                            {/* Telemetry Panel */}
-                            {genTelemetry.length > 0 && (
-                                <div className="mt-3 bg-slate-900 rounded-xl p-4 font-mono text-[11px] text-slate-300 max-h-40 overflow-y-auto">
-                                    <div className="flex items-center gap-2 mb-2 text-[9px] font-black uppercase tracking-widest text-slate-500">
-                                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                        Generation Telemetry
-                                    </div>
-                                    {genTelemetry.map((line, i) => (
-                                        <div key={i} className={`py-0.5 ${line.includes('FAILED') ? 'text-red-400' : line.includes('Done') ? 'text-emerald-400' : 'text-slate-400'}`}>
-                                            <span className="text-slate-600 mr-2">{String(i + 1).padStart(2, '0')}</span>
-                                            {line}
-                                        </div>
-                                    ))}
-                                    {isGenerating && (
-                                        <div className="py-0.5 text-indigo-400 animate-pulse flex items-center gap-2">
-                                            <Loader2 className="w-3 h-3 animate-spin" />
-                                            Processing...
+                            {/* Progress + Telemetry Panel */}
+                            {(genTelemetry.length > 0 || genProgress) && (
+                                <div className="mt-4 bg-slate-900 rounded-xl overflow-hidden">
+                                    {/* Progress Header with ETA */}
+                                    {genProgress && isGenerating && (
+                                        <div className="px-4 pt-4 pb-3">
+                                            <div className="flex items-center justify-between mb-2">
+                                                <div className="flex items-center gap-2">
+                                                    <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                                                    <span className="text-xs font-bold text-white">Step {genProgress.step} of {genProgress.totalSteps}</span>
+                                                </div>
+                                                <div className="flex items-center gap-3 text-[10px]">
+                                                    <span className="text-slate-400">{genProgress.elapsedSec}s elapsed</span>
+                                                    <span className="text-indigo-400 font-bold">~{genProgress.estimatedRemainingSec}s remaining</span>
+                                                    <span className="text-emerald-400 font-bold">{genProgress.keywords} keywords</span>
+                                                </div>
+                                            </div>
+                                            <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                                                <div className="h-full bg-gradient-to-r from-indigo-500 to-emerald-500 rounded-full transition-all duration-700" style={{ width: `${(genProgress.step / genProgress.totalSteps) * 100}%` }} />
+                                            </div>
                                         </div>
                                     )}
+                                    {/* Completed state */}
+                                    {genProgress && !isGenerating && (
+                                        <div className="px-4 pt-4 pb-2 flex items-center gap-2">
+                                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                                            <span className="text-xs font-bold text-emerald-400">Complete in {genProgress.elapsedSec}s — {genProgress.keywords} keywords generated</span>
+                                        </div>
+                                    )}
+                                    {/* Log Lines */}
+                                    <div className="px-4 pb-3 font-mono text-[10px] max-h-28 overflow-y-auto">
+                                        {genTelemetry.map((line, i) => (
+                                            <div key={i} className={`py-0.5 ${line.includes('FAILED') ? 'text-red-400' : line.includes('Complete') ? 'text-emerald-400' : 'text-slate-500'}`}>
+                                                {line}
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
                             )}
                         </div>
