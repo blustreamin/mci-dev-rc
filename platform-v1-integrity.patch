@@ -1,0 +1,336 @@
+From 583e49126c99767acb1d0d2ce6836ecc4d58ba92 Mon Sep 17 00:00:00 2001
+From: Venkat <venkat@blustream.in>
+Date: Sat, 21 Mar 2026 05:36:35 +0000
+Subject: [PATCH] feat: project-aware Integrity Console
+
+- AuditView: category selector uses ProjectStore categories, shows PROJECT MODE badge
+- IntegrityConsolePanel: V4 check probes IndexedDB in project mode (store counts, corpus health, strategy output)
+- IntegrityConsolePanel: Rebuild clears IndexedDB corpus/outputs for project categories
+- IntegrityConsolePanel: Target display shows [PROJECT] tag and resolves category name from ProjectStore
+- SignalCorpusPanel: reads corpus from IndexedDB in project mode, shows IndexedDB badge
+- SignalCorpusPanel: category dropdown uses project categories
+- All legacy Firestore paths preserved for CORE_CATEGORIES mode
+---
+ src/console/AuditView.tsx                     |  16 ++-
+ .../integrity/IntegrityConsolePanel.tsx       | 124 ++++++++++++------
+ src/console/integrity/SignalCorpusPanel.tsx   |  38 +++++-
+ 3 files changed, 130 insertions(+), 48 deletions(-)
+
+diff --git a/src/console/AuditView.tsx b/src/console/AuditView.tsx
+index e70edf9..ee50759 100644
+--- a/src/console/AuditView.tsx
++++ b/src/console/AuditView.tsx
+@@ -3,11 +3,12 @@ import React, { useState } from 'react';
+ import { 
+     ArrowLeft, ShieldCheck, Database, Layers, HeartPulse, 
+     BarChart3, Wrench, ShieldAlert, Wifi, BookOpen, Activity,
+-    Calendar, CheckCircle2, ChevronRight, LayoutGrid
++    Calendar, CheckCircle2, ChevronRight, LayoutGrid, Sparkles
+ } from 'lucide-react';
+ import { SimpleErrorBoundary } from '../components/SimpleErrorBoundary';
+ import { CORE_CATEGORIES } from '../constants';
+ import { DateUtils } from '../utils/dateUtils';
++import { useProjectStore } from '../config/ProjectStore';
+ 
+ // Tabs
+ import { IntegrityConsolePanel } from './integrity/IntegrityConsolePanel'; // MOUNTED
+@@ -22,8 +23,12 @@ import { DangerZoneTab } from './integrity/DangerZoneTab';
+ import { BatchOperationsView } from './BatchOperationsView';
+ 
+ export const AuditView: React.FC<{ onBack: () => void }> = ({ onBack }) => {
++    const projectStore = useProjectStore();
++    const availableCategories = projectStore.hasProject ? projectStore.categories : CORE_CATEGORIES;
++    const isProjectMode = projectStore.hasProject;
++    
+     // Global State
+-    const [categoryId, setCategoryId] = useState(CORE_CATEGORIES[0].id);
++    const [categoryId, setCategoryId] = useState(availableCategories[0]?.id || '');
+     const [monthKey, setMonthKey] = useState(DateUtils.getCurrentMonthKey());
+     const [activeTab, setActiveTab] = useState('CONSOLE'); // Default to Console
+ 
+@@ -66,6 +71,11 @@ export const AuditView: React.FC<{ onBack: () => void }> = ({ onBack }) => {
+ 
+                     {/* Global Context Selectors */}
+                     <div className="flex items-center gap-3">
++                        {isProjectMode && (
++                            <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/30 flex items-center gap-1">
++                                <Sparkles className="w-3 h-3"/> PROJECT MODE
++                            </span>
++                        )}
+                         <div className="flex items-center bg-slate-800 rounded-lg p-1 border border-slate-700">
+                             <LayoutGrid className="w-4 h-4 text-slate-400 ml-2 mr-2"/>
+                             <select 
+@@ -73,7 +83,7 @@ export const AuditView: React.FC<{ onBack: () => void }> = ({ onBack }) => {
+                                 onChange={e => setCategoryId(e.target.value)}
+                                 className="bg-transparent text-xs font-bold text-white border-none focus:ring-0 cursor-pointer py-1 pr-8"
+                             >
+-                                {CORE_CATEGORIES.map(c => <option key={c.id} value={c.id} className="text-slate-900">{c.category}</option>)}
++                                {availableCategories.map(c => <option key={c.id} value={c.id} className="text-slate-900">{c.category}</option>)}
+                             </select>
+                         </div>
+                         
+diff --git a/src/console/integrity/IntegrityConsolePanel.tsx b/src/console/integrity/IntegrityConsolePanel.tsx
+index a11b5ef..bc6b579 100644
+--- a/src/console/integrity/IntegrityConsolePanel.tsx
++++ b/src/console/integrity/IntegrityConsolePanel.tsx
+@@ -4,6 +4,7 @@ import {
+     ChevronUp, ChevronDown, AlertTriangle, ShieldCheck, XCircle, CheckCircle2 
+ } from 'lucide-react';
+ import { CORE_CATEGORIES, INTERNAL_VERSION_TAG, INTERNAL_VERSION_STATUS } from '../../constants';
++import { useProjectStore } from '../../config/ProjectStore';
+ import { DateUtils } from '../../utils/dateUtils';
+ import { runIntegrityAudit } from '../../services/integrityRunner';
+ import { IntegrityAuditReport } from '../../services/integrityContract';
+@@ -90,28 +91,24 @@ interface IntegrityConsolePanelProps {
+ }
+ 
+ export const IntegrityConsolePanel: React.FC<IntegrityConsolePanelProps> = ({ categoryId: propCategoryId, monthKey: propMonthKey }) => {
++    const projectStore = useProjectStore();
++    const isProjectMode = projectStore.hasProject;
++    const availableCategories = isProjectMode ? projectStore.categories : CORE_CATEGORIES;
+     
+     // Log Wiring Contract on Mount
+     useEffect(() => {
+         const contract = {
++            mode: isProjectMode ? 'PROJECT (IndexedDB)' : 'LEGACY (Firestore)',
+             console: {
+-                v4Check: "IntegrityConsoleService.runV4IntegrityCheck",
+-                rebuild: "CategoryRebuildService.rebuildCategory -> V3 Pipeline",
++                v4Check: isProjectMode ? "PlatformDB.getDiagnostics" : "IntegrityConsoleService.runV4IntegrityCheck",
++                rebuild: isProjectMode ? "PlatformDB.clearProjectData" : "CategoryRebuildService.rebuildCategory -> V3 Pipeline",
+                 audit: "integrityRunner.runIntegrityAudit"
+-            },
+-            inspector: {
+-                validate: "CategoryKeywordGrowthService.validateSnapshot -> DataForSeoClient.fetchGoogleVolumes_DFS",
+-                amazonBoost: "CategoryKeywordGrowthService.amazonBoostBackfill -> DataForSeoClient.fetchAmazonKeywordVolumesLive",
+-                grow: "CategoryKeywordGrowthService.closeAnchorDeficitsV2 -> Rebuild V3 (LITE)"
+-            },
+-            diagnostics: {
+-                probe: "DebugValidationProbe.run -> DFS Google (Proxy/Direct)"
+             }
+         };
+         console.log("[INTEGRITY_WIRING]", contract);
+-    }, []);
++    }, [isProjectMode]);
+ 
+-    const [categoryId, setCategoryId] = useState(propCategoryId || CORE_CATEGORIES[0].id);
++    const [categoryId, setCategoryId] = useState(propCategoryId || availableCategories[0]?.id || '');
+     const [monthKey, setMonthKey] = useState(propMonthKey || DateUtils.getCurrentMonthKey());
+     
+     useEffect(() => {
+@@ -150,8 +147,36 @@ export const IntegrityConsolePanel: React.FC<IntegrityConsolePanelProps> = ({ ca
+         setV4Loading(true);
+         setV4Report(null);
+         try {
+-            const res = await IntegrityConsoleService.runV4IntegrityCheck();
+-            setV4Report(res);
++            if (isProjectMode) {
++                // PROJECT MODE: Check IndexedDB health
++                const { PlatformDB } = await import('../../services/platformDB');
++                const diagnostics = await PlatformDB.getDiagnostics();
++                const corpus = await PlatformDB.getCorpus(categoryId);
++                const strategy = await PlatformDB.getStrategyOutput(categoryId);
++                
++                const report: V4IntegrityReport = {
++                    ts: new Date().toISOString(),
++                    verdict: corpus ? 'GO' : 'NO_GO',
++                    blockers: corpus ? [] : ['No corpus found in IndexedDB for ' + categoryId],
++                    checks: {
++                        firestore: { readOk: true, writeOk: true, error: 'N/A (IndexedDB mode)' },
++                        creds: { ok: true, details: 'IndexedDB — no creds needed' },
++                        amazonApi: { ok: true, error: '' },
++                        cache: { ok: true },
++                        snapshot: { ok: !!corpus, error: corpus ? '' : 'No corpus in IndexedDB' },
++                    },
++                    extra: {
++                        mode: 'PROJECT_INDEXEDDB',
++                        stores: diagnostics,
++                        corpusRows: corpus?.rowCount ?? 0,
++                        hasStrategyOutput: !!strategy,
++                    }
++                };
++                setV4Report(report);
++            } else {
++                const res = await IntegrityConsoleService.runV4IntegrityCheck();
++                setV4Report(res);
++            }
+         } catch (e) {
+             console.error("V4 Check Failed", e);
+         } finally {
+@@ -160,34 +185,52 @@ export const IntegrityConsolePanel: React.FC<IntegrityConsolePanelProps> = ({ ca
+     };
+ 
+     const handleRebuild = async () => {
+-        const cat = CORE_CATEGORIES.find(c => c.id === categoryId);
+-        const bench = CERTIFIED_BENCHMARK.categories[categoryId];
+-        const target = bench?.median.demandIndexMn || cat?.demandIndex || 0;
++        if (isProjectMode) {
++            // PROJECT MODE: Clear IndexedDB data
++            if (!confirm(`CLEAR PROJECT DATA for "${categoryId}"?\n\nThis will delete the keyword corpus and all outputs from IndexedDB.`)) return;
++            
++            setRebuildLoading(true);
++            setRebuildLogs([]);
++            try {
++                const { PlatformDB } = await import('../../services/platformDB');
++                await PlatformDB.clearCorpus(categoryId);
++                await PlatformDB.saveStrategyOutput(categoryId, null);
++                setRebuildLogs(prev => [...prev, "SUCCESS: IndexedDB data cleared for " + categoryId]);
++            } catch (e: any) {
++                setRebuildLogs(prev => [...prev, `EXCEPTION: ${e.message}`]);
++            } finally {
++                setRebuildLoading(false);
++            }
++        } else {
++            // LEGACY MODE: Firestore rebuild
++            const cat = CORE_CATEGORIES.find(c => c.id === categoryId);
++            const bench = CERTIFIED_BENCHMARK.categories[categoryId];
++            const target = bench?.median.demandIndexMn || cat?.demandIndex || 0;
+ 
+-        if (!confirm(`FLUSH & REBUILD "${categoryId}"?\n\nTarget Demand: ${target} Mn\n\nThis will DELETE all snapshots for this category and rebuild from scratch. This action cannot be undone.`)) {
+-            return;
+-        }
++            if (!confirm(`FLUSH & REBUILD "${categoryId}"?\n\nTarget Demand: ${target} Mn\n\nThis will DELETE all snapshots for this category and rebuild from scratch. This action cannot be undone.`)) {
++                return;
++            }
+ 
+-        setRebuildLoading(true);
+-        setRebuildLogs([]);
+-        try {
+-            const res = await CategoryRebuildService.rebuildCategory({
+-                categoryId,
+-                monthKey,
+-                targetDemandMn: target
+-            });
+-            
+-            if (!res.ok) {
+-                setRebuildLogs(prev => [...prev, `ERROR: ${res.error}`]);
+-            } else {
+-                 setRebuildLogs(prev => [...prev, "SUCCESS: Category Rebuilt."]);
+-                 // Refresh audit
+-                 runAudit();
++            setRebuildLoading(true);
++            setRebuildLogs([]);
++            try {
++                const res = await CategoryRebuildService.rebuildCategory({
++                    categoryId,
++                    monthKey,
++                    targetDemandMn: target
++                });
++                
++                if (!res.ok) {
++                    setRebuildLogs(prev => [...prev, `ERROR: ${res.error}`]);
++                } else {
++                     setRebuildLogs(prev => [...prev, "SUCCESS: Category Rebuilt."]);
++                     runAudit();
++                }
++            } catch (e: any) {
++                setRebuildLogs(prev => [...prev, `EXCEPTION: ${e.message}`]);
++            } finally {
++                setRebuildLoading(false);
+             }
+-        } catch (e: any) {
+-            setRebuildLogs(prev => [...prev, `EXCEPTION: ${e.message}`]);
+-        } finally {
+-            setRebuildLoading(false);
+         }
+     };
+ 
+@@ -205,7 +248,8 @@ export const IntegrityConsolePanel: React.FC<IntegrityConsolePanelProps> = ({ ca
+             <div className="flex flex-col md:flex-row items-start md:items-center gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                 <div className="flex items-center gap-2 text-xs text-slate-500">
+                     <span className="font-bold uppercase">Target:</span>
+-                    <span className="font-mono font-bold text-slate-800">{CORE_CATEGORIES.find(c => c.id === categoryId)?.category || categoryId}</span>
++                    {isProjectMode && <span className="text-emerald-500 font-bold text-[10px]">[PROJECT]</span>}
++                    <span className="font-mono font-bold text-slate-800">{availableCategories.find(c => c.id === categoryId)?.category || categoryId}</span>
+                     <span className="text-slate-300">|</span>
+                     <span className="font-mono font-bold text-slate-800">{monthKey}</span>
+                 </div>
+diff --git a/src/console/integrity/SignalCorpusPanel.tsx b/src/console/integrity/SignalCorpusPanel.tsx
+index c1f6642..b559b48 100644
+--- a/src/console/integrity/SignalCorpusPanel.tsx
++++ b/src/console/integrity/SignalCorpusPanel.tsx
+@@ -2,6 +2,7 @@
+ import React, { useState, useEffect } from 'react';
+ import { Database, Plus, RefreshCw, Layers, ShieldCheck, AlertTriangle, Loader2 } from 'lucide-react';
+ import { CORE_CATEGORIES } from '../../constants';
++import { useProjectStore } from '../../config/ProjectStore';
+ import { DateUtils } from '../../utils/dateUtils';
+ import { SignalCorpusService } from '../../services/signalCorpusService';
+ import { SignalCorpusDiagnostics, SignalCorpusDiagnosticsResult } from '../../services/signalCorpusDiagnostics';
+@@ -13,7 +14,11 @@ interface SignalCorpusPanelProps {
+ }
+ 
+ export const SignalCorpusPanel: React.FC<SignalCorpusPanelProps> = ({ categoryId: propCat, monthKey: propMonth }) => {
+-    const [localCat, setLocalCat] = useState(CORE_CATEGORIES[0].id);
++    const projectStore = useProjectStore();
++    const isProjectMode = projectStore.hasProject;
++    const availableCategories = isProjectMode ? projectStore.categories : CORE_CATEGORIES;
++    
++    const [localCat, setLocalCat] = useState(availableCategories[0]?.id || '');
+     const [localMonth, setLocalMonth] = useState(DateUtils.getCurrentMonthKey());
+     
+     const activeCategory = propCat || localCat;
+@@ -31,8 +36,25 @@ export const SignalCorpusPanel: React.FC<SignalCorpusPanelProps> = ({ categoryId
+     const loadStatus = async () => {
+         setLoading(true);
+         try {
+-            const res = await SignalCorpusDiagnostics.probeSnapshot(activeCategory, activeMonth);
+-            setStatus(res);
++            if (isProjectMode) {
++                // PROJECT MODE: Read from IndexedDB
++                const { PlatformDB } = await import('../../services/platformDB');
++                const corpus = await PlatformDB.getCorpus(activeCategory);
++                if (corpus) {
++                    setStatus({
++                        exists: true,
++                        snapshotId: `idb_${activeCategory}`,
++                        chunks: 1,
++                        signals: corpus.rowCount,
++                        lastUpdated: corpus.savedAt || null
++                    } as any);
++                } else {
++                    setStatus({ exists: false } as any);
++                }
++            } else {
++                const res = await SignalCorpusDiagnostics.probeSnapshot(activeCategory, activeMonth);
++                setStatus(res);
++            }
+         } finally {
+             setLoading(false);
+         }
+@@ -46,6 +68,11 @@ export const SignalCorpusPanel: React.FC<SignalCorpusPanelProps> = ({ categoryId
+         setOpLoading(true);
+         setMsg('');
+         try {
++            if (isProjectMode) {
++                setMsg('Project categories use AI-generated corpus. No manual creation needed.');
++                setOpLoading(false);
++                return;
++            }
+             const res = await SignalCorpusService.createSnapshot(activeCategory, activeMonth, {
+                 limit,
+                 minTrust,
+@@ -69,9 +96,10 @@ export const SignalCorpusPanel: React.FC<SignalCorpusPanelProps> = ({ categoryId
+         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
+             <div className="px-5 py-3 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+                 <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
+-                    <Layers className="w-4 h-4 text-violet-500"/> Signal Corpus Manager
++                    <Layers className="w-4 h-4 text-violet-500"/> {isProjectMode ? 'Project Corpus Manager' : 'Signal Corpus Manager'}
+                 </h3>
+                 <div className="flex items-center gap-2">
++                    {isProjectMode && <span className="text-[10px] font-bold text-emerald-500 bg-emerald-50 px-2 py-0.5 rounded">IndexedDB</span>}
+                     {msg && <span className="text-xs text-indigo-600 font-bold">{msg}</span>}
+                 </div>
+             </div>
+@@ -88,7 +116,7 @@ export const SignalCorpusPanel: React.FC<SignalCorpusPanelProps> = ({ categoryId
+                                     onChange={e => setLocalCat(e.target.value)}
+                                     className="block w-40 text-xs font-bold border-slate-300 rounded p-2"
+                                 >
+-                                    {CORE_CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.category}</option>)}
++                                    {availableCategories.map(c => <option key={c.id} value={c.id}>{c.category}</option>)}
+                                 </select>
+                             </div>
+                             <div className="space-y-1">
+-- 
+2.43.0
+

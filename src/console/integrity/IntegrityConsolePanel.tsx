@@ -4,6 +4,7 @@ import {
     ChevronUp, ChevronDown, AlertTriangle, ShieldCheck, XCircle, CheckCircle2 
 } from 'lucide-react';
 import { CORE_CATEGORIES, INTERNAL_VERSION_TAG, INTERNAL_VERSION_STATUS } from '../../constants';
+import { useProjectStore } from '../../config/ProjectStore';
 import { DateUtils } from '../../utils/dateUtils';
 import { runIntegrityAudit } from '../../services/integrityRunner';
 import { IntegrityAuditReport } from '../../services/integrityContract';
@@ -90,28 +91,24 @@ interface IntegrityConsolePanelProps {
 }
 
 export const IntegrityConsolePanel: React.FC<IntegrityConsolePanelProps> = ({ categoryId: propCategoryId, monthKey: propMonthKey }) => {
+    const projectStore = useProjectStore();
+    const isProjectMode = projectStore.hasProject;
+    const availableCategories = isProjectMode ? projectStore.categories : CORE_CATEGORIES;
     
     // Log Wiring Contract on Mount
     useEffect(() => {
         const contract = {
+            mode: isProjectMode ? 'PROJECT (IndexedDB)' : 'LEGACY (Firestore)',
             console: {
-                v4Check: "IntegrityConsoleService.runV4IntegrityCheck",
-                rebuild: "CategoryRebuildService.rebuildCategory -> V3 Pipeline",
+                v4Check: isProjectMode ? "PlatformDB.getDiagnostics" : "IntegrityConsoleService.runV4IntegrityCheck",
+                rebuild: isProjectMode ? "PlatformDB.clearProjectData" : "CategoryRebuildService.rebuildCategory -> V3 Pipeline",
                 audit: "integrityRunner.runIntegrityAudit"
-            },
-            inspector: {
-                validate: "CategoryKeywordGrowthService.validateSnapshot -> DataForSeoClient.fetchGoogleVolumes_DFS",
-                amazonBoost: "CategoryKeywordGrowthService.amazonBoostBackfill -> DataForSeoClient.fetchAmazonKeywordVolumesLive",
-                grow: "CategoryKeywordGrowthService.closeAnchorDeficitsV2 -> Rebuild V3 (LITE)"
-            },
-            diagnostics: {
-                probe: "DebugValidationProbe.run -> DFS Google (Proxy/Direct)"
             }
         };
         console.log("[INTEGRITY_WIRING]", contract);
-    }, []);
+    }, [isProjectMode]);
 
-    const [categoryId, setCategoryId] = useState(propCategoryId || CORE_CATEGORIES[0].id);
+    const [categoryId, setCategoryId] = useState(propCategoryId || availableCategories[0]?.id || '');
     const [monthKey, setMonthKey] = useState(propMonthKey || DateUtils.getCurrentMonthKey());
     
     useEffect(() => {
@@ -150,8 +147,36 @@ export const IntegrityConsolePanel: React.FC<IntegrityConsolePanelProps> = ({ ca
         setV4Loading(true);
         setV4Report(null);
         try {
-            const res = await IntegrityConsoleService.runV4IntegrityCheck();
-            setV4Report(res);
+            if (isProjectMode) {
+                // PROJECT MODE: Check IndexedDB health
+                const { PlatformDB } = await import('../../services/platformDB');
+                const diagnostics = await PlatformDB.getDiagnostics();
+                const corpus = await PlatformDB.getCorpus(categoryId);
+                const strategy = await PlatformDB.getStrategyOutput(categoryId);
+                
+                const report: V4IntegrityReport = {
+                    ts: new Date().toISOString(),
+                    verdict: corpus ? 'GO' : 'NO_GO',
+                    blockers: corpus ? [] : ['No corpus found in IndexedDB for ' + categoryId],
+                    checks: {
+                        firestore: { readOk: true, writeOk: true, error: 'N/A (IndexedDB mode)' },
+                        creds: { ok: true, details: 'IndexedDB — no creds needed' },
+                        amazonApi: { ok: true, error: '' },
+                        cache: { ok: true },
+                        snapshot: { ok: !!corpus, error: corpus ? '' : 'No corpus in IndexedDB' },
+                    },
+                    extra: {
+                        mode: 'PROJECT_INDEXEDDB',
+                        stores: diagnostics,
+                        corpusRows: corpus?.rowCount ?? 0,
+                        hasStrategyOutput: !!strategy,
+                    }
+                };
+                setV4Report(report);
+            } else {
+                const res = await IntegrityConsoleService.runV4IntegrityCheck();
+                setV4Report(res);
+            }
         } catch (e) {
             console.error("V4 Check Failed", e);
         } finally {
@@ -160,34 +185,52 @@ export const IntegrityConsolePanel: React.FC<IntegrityConsolePanelProps> = ({ ca
     };
 
     const handleRebuild = async () => {
-        const cat = CORE_CATEGORIES.find(c => c.id === categoryId);
-        const bench = CERTIFIED_BENCHMARK.categories[categoryId];
-        const target = bench?.median.demandIndexMn || cat?.demandIndex || 0;
-
-        if (!confirm(`FLUSH & REBUILD "${categoryId}"?\n\nTarget Demand: ${target} Mn\n\nThis will DELETE all snapshots for this category and rebuild from scratch. This action cannot be undone.`)) {
-            return;
-        }
-
-        setRebuildLoading(true);
-        setRebuildLogs([]);
-        try {
-            const res = await CategoryRebuildService.rebuildCategory({
-                categoryId,
-                monthKey,
-                targetDemandMn: target
-            });
+        if (isProjectMode) {
+            // PROJECT MODE: Clear IndexedDB data
+            if (!confirm(`CLEAR PROJECT DATA for "${categoryId}"?\n\nThis will delete the keyword corpus and all outputs from IndexedDB.`)) return;
             
-            if (!res.ok) {
-                setRebuildLogs(prev => [...prev, `ERROR: ${res.error}`]);
-            } else {
-                 setRebuildLogs(prev => [...prev, "SUCCESS: Category Rebuilt."]);
-                 // Refresh audit
-                 runAudit();
+            setRebuildLoading(true);
+            setRebuildLogs([]);
+            try {
+                const { PlatformDB } = await import('../../services/platformDB');
+                await PlatformDB.clearCorpus(categoryId);
+                await PlatformDB.saveStrategyOutput(categoryId, null);
+                setRebuildLogs(prev => [...prev, "SUCCESS: IndexedDB data cleared for " + categoryId]);
+            } catch (e: any) {
+                setRebuildLogs(prev => [...prev, `EXCEPTION: ${e.message}`]);
+            } finally {
+                setRebuildLoading(false);
             }
-        } catch (e: any) {
-            setRebuildLogs(prev => [...prev, `EXCEPTION: ${e.message}`]);
-        } finally {
-            setRebuildLoading(false);
+        } else {
+            // LEGACY MODE: Firestore rebuild
+            const cat = CORE_CATEGORIES.find(c => c.id === categoryId);
+            const bench = CERTIFIED_BENCHMARK.categories[categoryId];
+            const target = bench?.median.demandIndexMn || cat?.demandIndex || 0;
+
+            if (!confirm(`FLUSH & REBUILD "${categoryId}"?\n\nTarget Demand: ${target} Mn\n\nThis will DELETE all snapshots for this category and rebuild from scratch. This action cannot be undone.`)) {
+                return;
+            }
+
+            setRebuildLoading(true);
+            setRebuildLogs([]);
+            try {
+                const res = await CategoryRebuildService.rebuildCategory({
+                    categoryId,
+                    monthKey,
+                    targetDemandMn: target
+                });
+                
+                if (!res.ok) {
+                    setRebuildLogs(prev => [...prev, `ERROR: ${res.error}`]);
+                } else {
+                     setRebuildLogs(prev => [...prev, "SUCCESS: Category Rebuilt."]);
+                     runAudit();
+                }
+            } catch (e: any) {
+                setRebuildLogs(prev => [...prev, `EXCEPTION: ${e.message}`]);
+            } finally {
+                setRebuildLoading(false);
+            }
         }
     };
 
@@ -205,7 +248,8 @@ export const IntegrityConsolePanel: React.FC<IntegrityConsolePanelProps> = ({ ca
             <div className="flex flex-col md:flex-row items-start md:items-center gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
                 <div className="flex items-center gap-2 text-xs text-slate-500">
                     <span className="font-bold uppercase">Target:</span>
-                    <span className="font-mono font-bold text-slate-800">{CORE_CATEGORIES.find(c => c.id === categoryId)?.category || categoryId}</span>
+                    {isProjectMode && <span className="text-emerald-500 font-bold text-[10px]">[PROJECT]</span>}
+                    <span className="font-mono font-bold text-slate-800">{availableCategories.find(c => c.id === categoryId)?.category || categoryId}</span>
                     <span className="text-slate-300">|</span>
                     <span className="font-mono font-bold text-slate-800">{monthKey}</span>
                 </div>

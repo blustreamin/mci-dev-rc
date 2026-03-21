@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { Database, Plus, RefreshCw, Layers, ShieldCheck, AlertTriangle, Loader2 } from 'lucide-react';
 import { CORE_CATEGORIES } from '../../constants';
+import { useProjectStore } from '../../config/ProjectStore';
 import { DateUtils } from '../../utils/dateUtils';
 import { SignalCorpusService } from '../../services/signalCorpusService';
 import { SignalCorpusDiagnostics, SignalCorpusDiagnosticsResult } from '../../services/signalCorpusDiagnostics';
@@ -13,7 +14,11 @@ interface SignalCorpusPanelProps {
 }
 
 export const SignalCorpusPanel: React.FC<SignalCorpusPanelProps> = ({ categoryId: propCat, monthKey: propMonth }) => {
-    const [localCat, setLocalCat] = useState(CORE_CATEGORIES[0].id);
+    const projectStore = useProjectStore();
+    const isProjectMode = projectStore.hasProject;
+    const availableCategories = isProjectMode ? projectStore.categories : CORE_CATEGORIES;
+    
+    const [localCat, setLocalCat] = useState(availableCategories[0]?.id || '');
     const [localMonth, setLocalMonth] = useState(DateUtils.getCurrentMonthKey());
     
     const activeCategory = propCat || localCat;
@@ -31,8 +36,25 @@ export const SignalCorpusPanel: React.FC<SignalCorpusPanelProps> = ({ categoryId
     const loadStatus = async () => {
         setLoading(true);
         try {
-            const res = await SignalCorpusDiagnostics.probeSnapshot(activeCategory, activeMonth);
-            setStatus(res);
+            if (isProjectMode) {
+                // PROJECT MODE: Read from IndexedDB
+                const { PlatformDB } = await import('../../services/platformDB');
+                const corpus = await PlatformDB.getCorpus(activeCategory);
+                if (corpus) {
+                    setStatus({
+                        exists: true,
+                        snapshotId: `idb_${activeCategory}`,
+                        chunks: 1,
+                        signals: corpus.rowCount,
+                        lastUpdated: corpus.savedAt || null
+                    } as any);
+                } else {
+                    setStatus({ exists: false } as any);
+                }
+            } else {
+                const res = await SignalCorpusDiagnostics.probeSnapshot(activeCategory, activeMonth);
+                setStatus(res);
+            }
         } finally {
             setLoading(false);
         }
@@ -46,6 +68,11 @@ export const SignalCorpusPanel: React.FC<SignalCorpusPanelProps> = ({ categoryId
         setOpLoading(true);
         setMsg('');
         try {
+            if (isProjectMode) {
+                setMsg('Project categories use AI-generated corpus. No manual creation needed.');
+                setOpLoading(false);
+                return;
+            }
             const res = await SignalCorpusService.createSnapshot(activeCategory, activeMonth, {
                 limit,
                 minTrust,
@@ -69,9 +96,10 @@ export const SignalCorpusPanel: React.FC<SignalCorpusPanelProps> = ({ categoryId
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
             <div className="px-5 py-3 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
                 <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
-                    <Layers className="w-4 h-4 text-violet-500"/> Signal Corpus Manager
+                    <Layers className="w-4 h-4 text-violet-500"/> {isProjectMode ? 'Project Corpus Manager' : 'Signal Corpus Manager'}
                 </h3>
                 <div className="flex items-center gap-2">
+                    {isProjectMode && <span className="text-[10px] font-bold text-emerald-500 bg-emerald-50 px-2 py-0.5 rounded">IndexedDB</span>}
                     {msg && <span className="text-xs text-indigo-600 font-bold">{msg}</span>}
                 </div>
             </div>
@@ -88,7 +116,7 @@ export const SignalCorpusPanel: React.FC<SignalCorpusPanelProps> = ({ categoryId
                                     onChange={e => setLocalCat(e.target.value)}
                                     className="block w-40 text-xs font-bold border-slate-300 rounded p-2"
                                 >
-                                    {CORE_CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.category}</option>)}
+                                    {availableCategories.map(c => <option key={c.id} value={c.id}>{c.category}</option>)}
                                 </select>
                             </div>
                             <div className="space-y-1">

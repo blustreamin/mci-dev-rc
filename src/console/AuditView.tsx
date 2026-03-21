@@ -3,11 +3,12 @@ import React, { useState } from 'react';
 import { 
     ArrowLeft, ShieldCheck, Database, Layers, HeartPulse, 
     BarChart3, Wrench, ShieldAlert, Wifi, BookOpen, Activity,
-    Calendar, CheckCircle2, ChevronRight, LayoutGrid
+    Calendar, CheckCircle2, ChevronRight, LayoutGrid, Sparkles
 } from 'lucide-react';
 import { SimpleErrorBoundary } from '../components/SimpleErrorBoundary';
 import { CORE_CATEGORIES } from '../constants';
 import { DateUtils } from '../utils/dateUtils';
+import { useProjectStore } from '../config/ProjectStore';
 
 // Tabs
 import { IntegrityConsolePanel } from './integrity/IntegrityConsolePanel'; // MOUNTED
@@ -22,8 +23,12 @@ import { DangerZoneTab } from './integrity/DangerZoneTab';
 import { BatchOperationsView } from './BatchOperationsView';
 
 export const AuditView: React.FC<{ onBack: () => void }> = ({ onBack }) => {
+    const projectStore = useProjectStore();
+    const availableCategories = projectStore.hasProject ? projectStore.categories : CORE_CATEGORIES;
+    const isProjectMode = projectStore.hasProject;
+    
     // Global State
-    const [categoryId, setCategoryId] = useState(CORE_CATEGORIES[0].id);
+    const [categoryId, setCategoryId] = useState(availableCategories[0]?.id || '');
     const [monthKey, setMonthKey] = useState(DateUtils.getCurrentMonthKey());
     const [activeTab, setActiveTab] = useState('CONSOLE'); // Default to Console
 
@@ -66,6 +71,11 @@ export const AuditView: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
                     {/* Global Context Selectors */}
                     <div className="flex items-center gap-3">
+                        {isProjectMode && (
+                            <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/30 flex items-center gap-1">
+                                <Sparkles className="w-3 h-3"/> PROJECT MODE
+                            </span>
+                        )}
                         <div className="flex items-center bg-slate-800 rounded-lg p-1 border border-slate-700">
                             <LayoutGrid className="w-4 h-4 text-slate-400 ml-2 mr-2"/>
                             <select 
@@ -73,7 +83,7 @@ export const AuditView: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                                 onChange={e => setCategoryId(e.target.value)}
                                 className="bg-transparent text-xs font-bold text-white border-none focus:ring-0 cursor-pointer py-1 pr-8"
                             >
-                                {CORE_CATEGORIES.map(c => <option key={c.id} value={c.id} className="text-slate-900">{c.category}</option>)}
+                                {availableCategories.map(c => <option key={c.id} value={c.id} className="text-slate-900">{c.category}</option>)}
                             </select>
                         </div>
                         
