@@ -46,9 +46,9 @@ export interface TrendLockData {
     error?: string;
 }
 
-export async function getDeterministicTrend5y(categoryId: string, skipRemote: boolean = false): Promise<TrendLockData> {
+export async function getDeterministicTrend5y(categoryId: string, skipRemote: boolean = false, dynamicTerms?: string[]): Promise<TrendLockData> {
     const db = FirestoreClient.getDbSafe();
-    const lockId = categoryId; // Requirement: trend_locks/{categoryId}
+    const lockId = categoryId;
     const nowIso = new Date().toISOString();
 
     // 1. Try Read Lock
@@ -59,7 +59,6 @@ export async function getDeterministicTrend5y(categoryId: string, skipRemote: bo
             
             if (snap.exists()) {
                 const data = snap.data();
-                // Check if it looks like a valid lock
                 if (data.lockedAtISO && data.source === 'GOOGLE_TRENDS') {
                     console.log(`[DEMAND][TREND_LOCK] Reused existing lock for ${categoryId}: ${data.value_percent}% (${data.trend_label})`);
                     return {
@@ -80,10 +79,9 @@ export async function getDeterministicTrend5y(categoryId: string, skipRemote: bo
     }
 
     if (skipRemote) {
-        console.log(`[DEMAND][TREND_LOCK] Offline Mode: Skipping fresh fetch for ${categoryId}. Returning Baseline Default.`);
         return {
             value_percent: null,
-            trend_label: 'Stable', // Safe default for baseline
+            trend_label: 'Stable',
             source: 'BASELINE_DEFAULT',
             status: 'OK',
             lockId,
@@ -96,14 +94,14 @@ export async function getDeterministicTrend5y(categoryId: string, skipRemote: bo
     const headTerms = HEAD_TERMS[categoryId] || [];
     const brands = BRAND_PACKS[categoryId] || [];
     
-    // Stable Query Key Construction
-    const top3Head = headTerms.slice(0, 3);
+    // Use dynamic terms from corpus if no hardcoded terms exist
+    const effectiveTerms = headTerms.length > 0 ? headTerms.slice(0, 3) : (dynamicTerms || []).slice(0, 5);
     const topBrand = brands.length > 0 ? [brands[0]] : [];
-    const queryKey = [...top3Head, ...topBrand].join(", ") || categoryId;
+    const queryKey = [...effectiveTerms, ...topBrand].join(", ") || categoryId.replace(/-/g, ' ');
 
-    console.log(`[DEMAND][TREND_LOCK] Fetching FRESH trend for ${categoryId} (query="${queryKey}")`);
+    console.log(`[DEMAND][TREND_LOCK] Fetching FRESH trend for ${categoryId} (query="${queryKey}" dynamicTerms=${!!dynamicTerms})`);
 
-    const fresh = await GoogleTrendsService.fetch5yTrendPct(categoryId);
+    const fresh = await GoogleTrendsService.fetch5yTrendPct(categoryId, effectiveTerms.length > 0 ? effectiveTerms : undefined);
     
     const lockPayload = {
         categoryId,

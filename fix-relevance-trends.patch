@@ -1,0 +1,114 @@
+diff --git a/src/services/categoryGenerationService.ts b/src/services/categoryGenerationService.ts
+index adf839b..62aed88 100644
+--- a/src/services/categoryGenerationService.ts
++++ b/src/services/categoryGenerationService.ts
+@@ -126,6 +126,8 @@ RULES:
+ 3. Include local platforms: Flipkart, Amazon.in, BigBasket, Blinkit for India.
+ 4. NO duplicates. NO filler. NO academic phrases.
+ 5. The examples above use paneer — adapt ALL keywords to "${input.categoryText}" specifically.
++6. CRITICAL: Every keyword MUST be directly about "${input.categoryText}". Do NOT include keywords about substitute or adjacent categories (e.g., for paneer do NOT include "tofu", "cottage cheese", "cheese", "curd" as standalone terms — only include them in comparison queries like "paneer vs tofu").
++7. At least 80% of keywords must contain the core product term or a close variant of "${input.categoryText}".
+ 
+ Output ONLY the JSON. No markdown.`;
+ 
+diff --git a/src/services/demandRunner.ts b/src/services/demandRunner.ts
+index 0679791..cc3b068 100644
+--- a/src/services/demandRunner.ts
++++ b/src/services/demandRunner.ts
+@@ -148,8 +148,14 @@ export const DemandRunner = {
+             }
+ 
+             // D. Compute Metrics
++            // Extract top keywords for trend analysis (dynamic categories)
++            const topKeywordsForTrend = eligibleRows
++                .sort((a, b) => (b.volume || 0) - (a.volume || 0))
++                .slice(0, 5)
++                .map(r => r.keyword_text);
++            
+             // In Baseline Mode, skip remote fetch for trends.
+-            const trendLock = await getDeterministicTrend5y(categoryId, isBaselineMode);
++            const trendLock = await getDeterministicTrend5y(categoryId, isBaselineMode, topKeywordsForTrend);
+             const trendsForCalc = {
+                 fiveYearTrendPct: trendLock.value_percent,
+                 trendStatus: (trendLock.trend_label || 'UNKNOWN') as any,
+diff --git a/src/services/googleTrendsService.ts b/src/services/googleTrendsService.ts
+index c46ba7e..433bfef 100644
+--- a/src/services/googleTrendsService.ts
++++ b/src/services/googleTrendsService.ts
+@@ -46,9 +46,9 @@ export interface TrendLockData {
+     error?: string;
+ }
+ 
+-export async function getDeterministicTrend5y(categoryId: string, skipRemote: boolean = false): Promise<TrendLockData> {
++export async function getDeterministicTrend5y(categoryId: string, skipRemote: boolean = false, dynamicTerms?: string[]): Promise<TrendLockData> {
+     const db = FirestoreClient.getDbSafe();
+-    const lockId = categoryId; // Requirement: trend_locks/{categoryId}
++    const lockId = categoryId;
+     const nowIso = new Date().toISOString();
+ 
+     // 1. Try Read Lock
+@@ -59,7 +59,6 @@ export async function getDeterministicTrend5y(categoryId: string, skipRemote: bo
+             
+             if (snap.exists()) {
+                 const data = snap.data();
+-                // Check if it looks like a valid lock
+                 if (data.lockedAtISO && data.source === 'GOOGLE_TRENDS') {
+                     console.log(`[DEMAND][TREND_LOCK] Reused existing lock for ${categoryId}: ${data.value_percent}% (${data.trend_label})`);
+                     return {
+@@ -80,10 +79,9 @@ export async function getDeterministicTrend5y(categoryId: string, skipRemote: bo
+     }
+ 
+     if (skipRemote) {
+-        console.log(`[DEMAND][TREND_LOCK] Offline Mode: Skipping fresh fetch for ${categoryId}. Returning Baseline Default.`);
+         return {
+             value_percent: null,
+-            trend_label: 'Stable', // Safe default for baseline
++            trend_label: 'Stable',
+             source: 'BASELINE_DEFAULT',
+             status: 'OK',
+             lockId,
+@@ -96,14 +94,14 @@ export async function getDeterministicTrend5y(categoryId: string, skipRemote: bo
+     const headTerms = HEAD_TERMS[categoryId] || [];
+     const brands = BRAND_PACKS[categoryId] || [];
+     
+-    // Stable Query Key Construction
+-    const top3Head = headTerms.slice(0, 3);
++    // Use dynamic terms from corpus if no hardcoded terms exist
++    const effectiveTerms = headTerms.length > 0 ? headTerms.slice(0, 3) : (dynamicTerms || []).slice(0, 5);
+     const topBrand = brands.length > 0 ? [brands[0]] : [];
+-    const queryKey = [...top3Head, ...topBrand].join(", ") || categoryId;
++    const queryKey = [...effectiveTerms, ...topBrand].join(", ") || categoryId.replace(/-/g, ' ');
+ 
+-    console.log(`[DEMAND][TREND_LOCK] Fetching FRESH trend for ${categoryId} (query="${queryKey}")`);
++    console.log(`[DEMAND][TREND_LOCK] Fetching FRESH trend for ${categoryId} (query="${queryKey}" dynamicTerms=${!!dynamicTerms})`);
+ 
+-    const fresh = await GoogleTrendsService.fetch5yTrendPct(categoryId);
++    const fresh = await GoogleTrendsService.fetch5yTrendPct(categoryId, effectiveTerms.length > 0 ? effectiveTerms : undefined);
+     
+     const lockPayload = {
+         categoryId,
+diff --git a/src/services/projectCorpusBuilder.ts b/src/services/projectCorpusBuilder.ts
+index f84d8e7..e51d96b 100644
+--- a/src/services/projectCorpusBuilder.ts
++++ b/src/services/projectCorpusBuilder.ts
+@@ -261,8 +261,20 @@ export const ProjectCorpusBuilder = {
+ 
+                         // Deduplicate against existing seeds
+                         const existingKeywords = new Set(allDfsRows.map(r => r.keyword.toLowerCase()));
++                        
++                        // Build relevance terms from category name, sub-categories, and key brands
++                        const categoryWords = gen.category.toLowerCase().split(/\s+/).filter(w => w.length > 2);
++                        const brandWords = (gen.keyBrands || []).map(b => b.toLowerCase());
++                        const subCatWords = gen.subCategories.flatMap(sc => sc.name.toLowerCase().split(/\s+/).filter(w => w.length > 3));
++                        const relevanceTerms = new Set([...categoryWords, ...brandWords, ...subCatWords]);
++                        
++                        // Filter: discovered keyword must contain at least one relevance term
+                         discoveredRows = discovered
+                             .filter(r => !existingKeywords.has(r.keyword.toLowerCase()))
++                            .filter(r => {
++                                const kwLower = r.keyword.toLowerCase();
++                                return Array.from(relevanceTerms).some(term => kwLower.includes(term));
++                            })
+                             .slice(0, DISCOVERY_MAX_NEW);
+ 
+                         emit('DISCOVERING_KEYWORDS', `Discovered ${discoveredRows.length} new keywords`, {

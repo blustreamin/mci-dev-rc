@@ -126,6 +126,8 @@ RULES:
 3. Include local platforms: Flipkart, Amazon.in, BigBasket, Blinkit for India.
 4. NO duplicates. NO filler. NO academic phrases.
 5. The examples above use paneer — adapt ALL keywords to "${input.categoryText}" specifically.
+6. CRITICAL: Every keyword MUST be directly about "${input.categoryText}". Do NOT include keywords about substitute or adjacent categories (e.g., for paneer do NOT include "tofu", "cottage cheese", "cheese", "curd" as standalone terms — only include them in comparison queries like "paneer vs tofu").
+7. At least 80% of keywords must contain the core product term or a close variant of "${input.categoryText}".
 
 Output ONLY the JSON. No markdown.`;
 

@@ -148,8 +148,14 @@ export const DemandRunner = {
             }
 
             // D. Compute Metrics
+            // Extract top keywords for trend analysis (dynamic categories)
+            const topKeywordsForTrend = eligibleRows
+                .sort((a, b) => (b.volume || 0) - (a.volume || 0))
+                .slice(0, 5)
+                .map(r => r.keyword_text);
+            
             // In Baseline Mode, skip remote fetch for trends.
-            const trendLock = await getDeterministicTrend5y(categoryId, isBaselineMode);
+            const trendLock = await getDeterministicTrend5y(categoryId, isBaselineMode, topKeywordsForTrend);
             const trendsForCalc = {
                 fiveYearTrendPct: trendLock.value_percent,
                 trendStatus: (trendLock.trend_label || 'UNKNOWN') as any,

@@ -261,8 +261,20 @@ export const ProjectCorpusBuilder = {
 
                         // Deduplicate against existing seeds
                         const existingKeywords = new Set(allDfsRows.map(r => r.keyword.toLowerCase()));
+                        
+                        // Build relevance terms from category name, sub-categories, and key brands
+                        const categoryWords = gen.category.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+                        const brandWords = (gen.keyBrands || []).map(b => b.toLowerCase());
+                        const subCatWords = gen.subCategories.flatMap(sc => sc.name.toLowerCase().split(/\s+/).filter(w => w.length > 3));
+                        const relevanceTerms = new Set([...categoryWords, ...brandWords, ...subCatWords]);
+                        
+                        // Filter: discovered keyword must contain at least one relevance term
                         discoveredRows = discovered
                             .filter(r => !existingKeywords.has(r.keyword.toLowerCase()))
+                            .filter(r => {
+                                const kwLower = r.keyword.toLowerCase();
+                                return Array.from(relevanceTerms).some(term => kwLower.includes(term));
+                            })
                             .slice(0, DISCOVERY_MAX_NEW);
 
                         emit('DISCOVERING_KEYWORDS', `Discovered ${discoveredRows.length} new keywords`, {
