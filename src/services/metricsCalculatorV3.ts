@@ -85,11 +85,17 @@ export const MetricsCalculatorV3 = {
         }
 
         // Readiness (Intent Mix)
-        // Intent weights aligned with presentation (3-tier model)
+        // Intent weights: higher = closer to purchase/action
         const weights: Record<string, number> = {
+            // Legacy buckets
             'Decision': 1.00,
             'Consideration': 0.70, 'Need': 0.70, 'Problem': 0.70,
-            'Habit': 0.40, 'Aspirational': 0.40, 'Discovery': 0.40
+            'Habit': 0.40, 'Aspirational': 0.40, 'Discovery': 0.40,
+            // New project-mode buckets
+            'TRANSACTIONAL': 1.00,
+            'COMMERCIAL': 0.75,
+            'INFORMATIONAL': 0.45,
+            'NAVIGATIONAL': 0.55,
         };
         let weightedSum = 0;
         winnersEligible.forEach(w => {

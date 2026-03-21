@@ -140,12 +140,15 @@ export const GoogleTrendsService = {
     /**
      * Fetches 5-year trend data for a category using search-grounded Gemini.
      */
-    async fetch5yTrendPct(categoryId: string): Promise<TrendsResult> {
-        const headTerms = HEAD_TERMS[categoryId] || [];
+    async fetch5yTrendPct(categoryId: string, dynamicTerms?: string[]): Promise<TrendsResult> {
+        const headTerms = dynamicTerms || HEAD_TERMS[categoryId] || [];
         const brands = BRAND_PACKS[categoryId] || [];
         
         if (headTerms.length === 0) {
-            return { fiveYearTrendPct: null, trendStatus: 'UNKNOWN', trendError: "MISSING_HEAD_TERMS" };
+            // For dynamic categories, use the category ID as a search term
+            const fallbackTerm = categoryId.replace(/-/g, ' ').replace(/_/g, ' ');
+            console.log(`[DEMAND_V3][TRENDS] No HEAD_TERMS for ${categoryId}, using fallback: "${fallbackTerm}"`);
+            return this._fetchWithTerms(fallbackTerm);
         }
 
         // Deterministic term selection
@@ -153,6 +156,10 @@ export const GoogleTrendsService = {
         const topBrand = brands.length > 0 ? [brands[0]] : [];
         const queryTerms = [...top3Head, ...topBrand].join(", ");
 
+        return this._fetchWithTerms(queryTerms);
+    },
+
+    async _fetchWithTerms(queryTerms: string): Promise<TrendsResult> {
         const ai = getAI();
         const prompt = `
             Act as a Category Intelligence Analyst. 

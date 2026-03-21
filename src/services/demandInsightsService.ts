@@ -1,7 +1,6 @@
 
 import { GoogleGenAI } from "@google/genai";
 import { SweepResult, DemandInsight } from '../types';
-import { CORE_CATEGORIES } from '../constants';
 import { safeText } from '../utils/safety';
 
 const safeProcess = (typeof process !== 'undefined' && process && process.env) 
@@ -37,19 +36,19 @@ function cleanJson(text: string): string {
 }
 
 export const DemandInsightsService = {
-    async generate(categoryId: string, metrics: SweepResult, month: string): Promise<DemandInsight | null> {
+    async generate(categoryId: string, metrics: SweepResult, month: string, categoryName?: string): Promise<DemandInsight | null> {
         console.log(`[DEMAND_INSIGHTS] Generating for ${categoryId}...`);
         
         try {
             const ai = getAI();
-            const categoryName = CORE_CATEGORIES.find(c => c.id === categoryId)?.category || categoryId;
+            const resolvedName = categoryName || metrics.category || categoryId.replace(/-/g, ' ').replace(/_/g, ' ');
             
             const prompt = `
                 Act as a Senior Category Analyst for the Indian Market.
                 Generate a strategic "Demand Insight" narrative based on the following computed metrics.
                 Use ONLY provided numbers. If missing, say missing.
                 
-                CATEGORY: ${categoryName}
+                CATEGORY: ${resolvedName}
                 CONTEXT: ${month}
                 
                 METRICS:
