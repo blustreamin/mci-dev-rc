@@ -8,6 +8,7 @@ import { getDeterministicTrend5y } from './googleTrendsService';
 import { SnapshotKeywordRow } from '../types';
 import { DemandProvenanceAudit } from './demandProvenanceAudit';
 import { DEMAND_BASELINE_MODE } from '../constants/runtimeFlags';
+import { PlatformDB } from './platformDB';
 
 export interface RunDemandOptions {
     categoryId: string;
@@ -74,44 +75,56 @@ export const DemandRunner = {
 
         // 2. Compute Fresh
         try {
-            // A. Resolve Corpus
-            const corpusRes = await SnapshotResolver.resolveActiveSnapshot(categoryId, country, language);
-            if (!corpusRes.ok || !corpusRes.snapshot) {
-                throw new Error(`Corpus snapshot not found for ${categoryId}`);
-            }
-            const corpusSnapshotId = corpusRes.snapshot.snapshot_id;
-            
-            console.log(`[DEMAND_ENGINE][SNAP_RESOLVE] snapshotId=${corpusSnapshotId} lifecycle=${corpusRes.snapshot.lifecycle}`);
+            // A. Resolve Corpus — try PlatformDB first (for dynamic project categories), then Firestore
+            let allRows: any[] = [];
+            let corpusSource = 'UNKNOWN';
+            let corpusSnapshotId = `platformdb_${categoryId}`;
 
-            // B. Load Rows
-            // We load ALL rows (onlyValid: false) then filter strictly ourselves
-            const { chunks, totalRows } = await loadSnapshotRowsLiteChunked(
-                categoryId, 
-                corpusSnapshotId, 
-                { chunkSize: 1000, maxChunks: 50, seed: `DEMAND_${month}` },
-                { onlyValid: false } 
-            );
-            const allRows = chunks.flat();
+            const platformCorpus = await PlatformDB.getCorpus(categoryId);
+            if (platformCorpus && platformCorpus.rows && platformCorpus.rows.length > 0) {
+                // PlatformDB has corpus (project mode)
+                allRows = platformCorpus.rows;
+                corpusSource = 'PLATFORMDB';
+                console.log(`[DEMAND_ENGINE][PLATFORMDB] Loaded ${allRows.length} rows from IndexedDB for ${categoryId}`);
+            } else {
+                // Firestore path (legacy categories)
+                const corpusRes = await SnapshotResolver.resolveActiveSnapshot(categoryId, country, language);
+                if (!corpusRes.ok || !corpusRes.snapshot) {
+                    throw new Error(`Corpus snapshot not found for ${categoryId}`);
+                }
+                corpusSnapshotId = corpusRes.snapshot.snapshot_id;
+                
+                console.log(`[DEMAND_ENGINE][SNAP_RESOLVE] snapshotId=${corpusSnapshotId} lifecycle=${corpusRes.snapshot.lifecycle}`);
+
+                const { chunks, totalRows } = await loadSnapshotRowsLiteChunked(
+                    categoryId, 
+                    corpusSnapshotId, 
+                    { chunkSize: 1000, maxChunks: 50, seed: `DEMAND_${month}` },
+                    { onlyValid: false } 
+                );
+                allRows = chunks.flat();
+                corpusSource = 'FIRESTORE';
+            }
             
-            console.log(`[DEMAND_ENGINE][ROWS_LOADED] count=${allRows.length} (metaTotal=${totalRows})`);
+            console.log(`[DEMAND_ENGINE][ROWS_LOADED] count=${allRows.length} source=${corpusSource}`);
 
             // C. Filter
             // Map to strict shape for calculator
             const eligibleRows: SnapshotKeywordRow[] = [];
             const processedRows = allRows.map((r: any) => {
                 const row: SnapshotKeywordRow = {
-                    keyword_id: r.keyword_id || r.keyword,
-                    keyword_text: r.keyword,
-                    volume: Number(r.volume),
+                    keyword_id: r.keyword_id || r.keyword || '',
+                    keyword_text: r.keyword_text || r.keyword || '',
+                    volume: Number(r.volume) || 0,
                     amazonVolume: r.amazonVolume,
                     anchor_id: r.anchor_id || 'Unknown',
                     intent_bucket: r.intent_bucket || 'Discovery',
-                    status: r.status,
+                    status: r.status || (Number(r.volume) > 0 ? 'VALID' : 'ZERO'),
                     active: r.active !== false,
                     language_code: language,
                     country_code: country,
                     category_id: categoryId,
-                    created_at_iso: new Date().toISOString()
+                    created_at_iso: r.created_at_iso || new Date().toISOString()
                 };
                 
                 if (isDemandEligible(row)) {

@@ -1,0 +1,143 @@
+diff --git a/src/services/demandRunner.ts b/src/services/demandRunner.ts
+index 5701d1c..0679791 100644
+--- a/src/services/demandRunner.ts
++++ b/src/services/demandRunner.ts
+@@ -8,6 +8,7 @@ import { getDeterministicTrend5y } from './googleTrendsService';
+ import { SnapshotKeywordRow } from '../types';
+ import { DemandProvenanceAudit } from './demandProvenanceAudit';
+ import { DEMAND_BASELINE_MODE } from '../constants/runtimeFlags';
++import { PlatformDB } from './platformDB';
+ 
+ export interface RunDemandOptions {
+     categoryId: string;
+@@ -74,44 +75,56 @@ export const DemandRunner = {
+ 
+         // 2. Compute Fresh
+         try {
+-            // A. Resolve Corpus
+-            const corpusRes = await SnapshotResolver.resolveActiveSnapshot(categoryId, country, language);
+-            if (!corpusRes.ok || !corpusRes.snapshot) {
+-                throw new Error(`Corpus snapshot not found for ${categoryId}`);
++            // A. Resolve Corpus — try PlatformDB first (for dynamic project categories), then Firestore
++            let allRows: any[] = [];
++            let corpusSource = 'UNKNOWN';
++            let corpusSnapshotId = `platformdb_${categoryId}`;
++
++            const platformCorpus = await PlatformDB.getCorpus(categoryId);
++            if (platformCorpus && platformCorpus.rows && platformCorpus.rows.length > 0) {
++                // PlatformDB has corpus (project mode)
++                allRows = platformCorpus.rows;
++                corpusSource = 'PLATFORMDB';
++                console.log(`[DEMAND_ENGINE][PLATFORMDB] Loaded ${allRows.length} rows from IndexedDB for ${categoryId}`);
++            } else {
++                // Firestore path (legacy categories)
++                const corpusRes = await SnapshotResolver.resolveActiveSnapshot(categoryId, country, language);
++                if (!corpusRes.ok || !corpusRes.snapshot) {
++                    throw new Error(`Corpus snapshot not found for ${categoryId}`);
++                }
++                corpusSnapshotId = corpusRes.snapshot.snapshot_id;
++                
++                console.log(`[DEMAND_ENGINE][SNAP_RESOLVE] snapshotId=${corpusSnapshotId} lifecycle=${corpusRes.snapshot.lifecycle}`);
++
++                const { chunks, totalRows } = await loadSnapshotRowsLiteChunked(
++                    categoryId, 
++                    corpusSnapshotId, 
++                    { chunkSize: 1000, maxChunks: 50, seed: `DEMAND_${month}` },
++                    { onlyValid: false } 
++                );
++                allRows = chunks.flat();
++                corpusSource = 'FIRESTORE';
+             }
+-            const corpusSnapshotId = corpusRes.snapshot.snapshot_id;
+-            
+-            console.log(`[DEMAND_ENGINE][SNAP_RESOLVE] snapshotId=${corpusSnapshotId} lifecycle=${corpusRes.snapshot.lifecycle}`);
+-
+-            // B. Load Rows
+-            // We load ALL rows (onlyValid: false) then filter strictly ourselves
+-            const { chunks, totalRows } = await loadSnapshotRowsLiteChunked(
+-                categoryId, 
+-                corpusSnapshotId, 
+-                { chunkSize: 1000, maxChunks: 50, seed: `DEMAND_${month}` },
+-                { onlyValid: false } 
+-            );
+-            const allRows = chunks.flat();
+             
+-            console.log(`[DEMAND_ENGINE][ROWS_LOADED] count=${allRows.length} (metaTotal=${totalRows})`);
++            console.log(`[DEMAND_ENGINE][ROWS_LOADED] count=${allRows.length} source=${corpusSource}`);
+ 
+             // C. Filter
+             // Map to strict shape for calculator
+             const eligibleRows: SnapshotKeywordRow[] = [];
+             const processedRows = allRows.map((r: any) => {
+                 const row: SnapshotKeywordRow = {
+-                    keyword_id: r.keyword_id || r.keyword,
+-                    keyword_text: r.keyword,
+-                    volume: Number(r.volume),
++                    keyword_id: r.keyword_id || r.keyword || '',
++                    keyword_text: r.keyword_text || r.keyword || '',
++                    volume: Number(r.volume) || 0,
+                     amazonVolume: r.amazonVolume,
+                     anchor_id: r.anchor_id || 'Unknown',
+                     intent_bucket: r.intent_bucket || 'Discovery',
+-                    status: r.status,
++                    status: r.status || (Number(r.volume) > 0 ? 'VALID' : 'ZERO'),
+                     active: r.active !== false,
+                     language_code: language,
+                     country_code: country,
+                     category_id: categoryId,
+-                    created_at_iso: new Date().toISOString()
++                    created_at_iso: r.created_at_iso || new Date().toISOString()
+                 };
+                 
+                 if (isDemandEligible(row)) {
+diff --git a/src/services/projectCorpusBuilder.ts b/src/services/projectCorpusBuilder.ts
+index 7d94218..f84d8e7 100644
+--- a/src/services/projectCorpusBuilder.ts
++++ b/src/services/projectCorpusBuilder.ts
+@@ -282,6 +282,7 @@ export const ProjectCorpusBuilder = {
+ 
+             const snapshotRows: SnapshotKeywordRow[] = [];
+             const seenKeywords = new Set<string>();
++            let rowIndex = 0;
+ 
+             // Process seed keywords
+             for (const dfsRow of allDfsRows) {
+@@ -289,8 +290,9 @@ export const ProjectCorpusBuilder = {
+                 if (seenKeywords.has(key)) continue;
+                 seenKeywords.add(key);
+ 
+-                const row = dfsRowToSnapshotRow(dfsRow, categoryId, gen, countryCode, language, 'SEED');
++                const row = dfsRowToSnapshotRow(dfsRow, categoryId, gen, countryCode, language, 'SEED', rowIndex);
+                 snapshotRows.push(row);
++                rowIndex++;
+ 
+                 if (row.status === 'VALID') progress.validKeywords++;
+                 else progress.zeroKeywords++;
+@@ -302,8 +304,9 @@ export const ProjectCorpusBuilder = {
+                 if (seenKeywords.has(key)) continue;
+                 seenKeywords.add(key);
+ 
+-                const row = dfsRowToSnapshotRow(dfsRow, categoryId, gen, countryCode, language, 'DISCOVERED');
++                const row = dfsRowToSnapshotRow(dfsRow, categoryId, gen, countryCode, language, 'DISCOVERED', rowIndex);
+                 snapshotRows.push(row);
++                rowIndex++;
+ 
+                 if (row.status === 'VALID') progress.validKeywords++;
+                 else progress.zeroKeywords++;
+@@ -319,7 +322,7 @@ export const ProjectCorpusBuilder = {
+                     keyword_id: slugifyKeywordId(kw, categoryId),
+                     keyword_text: kw,
+                     volume: null,
+-                    anchor_id: assignAnchor(kw, gen),
++                    anchor_id: assignAnchor(kw, gen, rowIndex),
+                     intent_bucket: classifyIntent(kw),
+                     status: 'UNVERIFIED',
+                     active: false,
+@@ -329,6 +332,7 @@ export const ProjectCorpusBuilder = {
+                     created_at_iso: new Date().toISOString(),
+                     validation_tier: 'AI_GENERATED_NO_DFS',
+                 });
++                rowIndex++;
+             }
+ 
+             emit('BUILDING_ROWS', `Built ${snapshotRows.length} corpus rows (${progress.validKeywords} valid, ${progress.zeroKeywords} zero)`, {

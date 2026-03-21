@@ -282,6 +282,7 @@ export const ProjectCorpusBuilder = {
 
             const snapshotRows: SnapshotKeywordRow[] = [];
             const seenKeywords = new Set<string>();
+            let rowIndex = 0;
 
             // Process seed keywords
             for (const dfsRow of allDfsRows) {
@@ -289,8 +290,9 @@ export const ProjectCorpusBuilder = {
                 if (seenKeywords.has(key)) continue;
                 seenKeywords.add(key);
 
-                const row = dfsRowToSnapshotRow(dfsRow, categoryId, gen, countryCode, language, 'SEED');
+                const row = dfsRowToSnapshotRow(dfsRow, categoryId, gen, countryCode, language, 'SEED', rowIndex);
                 snapshotRows.push(row);
+                rowIndex++;
 
                 if (row.status === 'VALID') progress.validKeywords++;
                 else progress.zeroKeywords++;
@@ -302,8 +304,9 @@ export const ProjectCorpusBuilder = {
                 if (seenKeywords.has(key)) continue;
                 seenKeywords.add(key);
 
-                const row = dfsRowToSnapshotRow(dfsRow, categoryId, gen, countryCode, language, 'DISCOVERED');
+                const row = dfsRowToSnapshotRow(dfsRow, categoryId, gen, countryCode, language, 'DISCOVERED', rowIndex);
                 snapshotRows.push(row);
+                rowIndex++;
 
                 if (row.status === 'VALID') progress.validKeywords++;
                 else progress.zeroKeywords++;
@@ -319,7 +322,7 @@ export const ProjectCorpusBuilder = {
                     keyword_id: slugifyKeywordId(kw, categoryId),
                     keyword_text: kw,
                     volume: null,
-                    anchor_id: assignAnchor(kw, gen),
+                    anchor_id: assignAnchor(kw, gen, rowIndex),
                     intent_bucket: classifyIntent(kw),
                     status: 'UNVERIFIED',
                     active: false,
@@ -329,6 +332,7 @@ export const ProjectCorpusBuilder = {
                     created_at_iso: new Date().toISOString(),
                     validation_tier: 'AI_GENERATED_NO_DFS',
                 });
+                rowIndex++;
             }
 
             emit('BUILDING_ROWS', `Built ${snapshotRows.length} corpus rows (${progress.validKeywords} valid, ${progress.zeroKeywords} zero)`, {
