@@ -57,29 +57,34 @@ function slugifyKeywordId(keyword: string, categoryId: string): string {
     return `${categoryId}__${clean}`;
 }
 
-function assignAnchor(keyword: string, category: AiGeneratedCategory): string {
-    // Try to match keyword to a sub-category anchor
+function assignAnchor(keyword: string, category: AiGeneratedCategory, index?: number): string {
+    const subs = category.subCategories || [];
+    if (subs.length === 0) return 'general';
+    
+    // Try keyword-based matching first
     const kwLower = keyword.toLowerCase();
-    for (const sub of category.subCategories) {
-        for (const anchor of sub.anchors) {
-            if (kwLower.includes(anchor.toLowerCase().split(' ')[0])) {
-                return sub.name.toLowerCase().replace(/\s+/g, '_').substring(0, 30);
+    for (const sub of subs) {
+        const subNameLower = sub.name.toLowerCase();
+        // Check if any word in sub-category name appears in keyword
+        const subWords = subNameLower.split(/\s+/).filter(w => w.length > 3);
+        for (const word of subWords) {
+            if (kwLower.includes(word)) {
+                return subNameLower.replace(/[^a-z0-9]+/g, '_').substring(0, 30);
             }
         }
-        // Check sub-category name itself
-        if (kwLower.includes(sub.name.toLowerCase().split(' ')[0])) {
-            return sub.name.toLowerCase().replace(/\s+/g, '_').substring(0, 30);
-        }
     }
-    // Fallback: use first strategic anchor
-    return category.anchors[0]?.toLowerCase().replace(/\s+/g, '_').substring(0, 30) || 'general';
+    
+    // Round-robin fallback using index
+    const idx = index ?? Math.floor(Math.random() * subs.length);
+    const sub = subs[idx % subs.length];
+    return sub.name.toLowerCase().replace(/[^a-z0-9]+/g, '_').substring(0, 30);
 }
 
 function classifyIntent(keyword: string): string {
     const kw = keyword.toLowerCase();
-    if (/\b(buy|price|cost|cheap|affordable|deal|offer|discount|coupon|shop|order|where to buy)\b/.test(kw)) return 'TRANSACTIONAL';
-    if (/\b(best|top|vs|versus|compare|comparison|review|rating|recommend)\b/.test(kw)) return 'COMMERCIAL';
-    if (/\b(how|what|why|when|guide|tutorial|tips|does|can|should|is it)\b/.test(kw)) return 'INFORMATIONAL';
+    if (/\b(buy|price|cost|cheap|affordable|deal|offer|discount|coupon|shop|order|where to buy|near me|online|delivery|rate|rs|rupees|amazon|flipkart|bigbasket|blinkit|swiggy|zepto)\b/.test(kw)) return 'TRANSACTIONAL';
+    if (/\b(best|top|vs|versus|compare|comparison|review|rating|recommend|which|better|worth)\b/.test(kw)) return 'COMMERCIAL';
+    if (/\b(how|what|why|when|guide|tutorial|tips|does|can|should|is it|benefits|difference|calories|nutrition|protein|healthy|good for|bad for|side effect|making|recipe|homemade)\b/.test(kw)) return 'INFORMATIONAL';
     return 'NAVIGATIONAL';
 }
 
@@ -89,7 +94,8 @@ function dfsRowToSnapshotRow(
     category: AiGeneratedCategory,
     countryCode: string,
     language: string,
-    source: 'SEED' | 'DISCOVERED'
+    source: 'SEED' | 'DISCOVERED',
+    index: number = 0
 ): SnapshotKeywordRow {
     const volume = dfsRow.search_volume ?? null;
     const isZero = volume === null || volume === 0;
@@ -100,7 +106,7 @@ function dfsRowToSnapshotRow(
         volume: volume,
         cpc: dfsRow.cpc ?? undefined,
         competition: dfsRow.competition_index ?? dfsRow.competition ?? undefined,
-        anchor_id: assignAnchor(dfsRow.keyword, category),
+        anchor_id: assignAnchor(dfsRow.keyword, category, index),
         intent_bucket: classifyIntent(dfsRow.keyword),
         status: isZero ? 'ZERO' : 'VALID',
         active: !isZero, // Zero-volume keywords are inactive by default

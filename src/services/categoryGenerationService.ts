@@ -61,44 +61,82 @@ export async function generateCategoryConfig(
 
     const ai = new GoogleGenAI({ apiKey });
 
-    const prompt = `You are a Category Intelligence Architect for consumer and market research.
+    const prompt = `You are a search keyword researcher building a keyword corpus for consumer market research. Your keywords will be validated against Google Ads search volume data via DataForSEO.
 
-A user wants to set up a research project for the following:
-- Category: "${input.categoryText}"
-- Industry: ${input.industry}
-- Country/Market: ${input.countryName} (${input.countryCode})
-- Language: ${input.language}
+Category: "${input.categoryText}"
+Industry: ${input.industry}
+Country: ${input.countryName} (${input.countryCode})
+Language: ${input.language}
 
-Your task is to generate a complete category research configuration. Think like a senior research consultant at Nielsen, Kantar, or McKinsey setting up a category deep-dive.
-
-Generate STRICT JSON with this exact schema:
+Generate JSON with this schema:
 {
-    "category": "<Clean, professional category name — e.g. 'Premium Dog Food', 'Electric Two-Wheelers', 'Men's Face Care'>",
-    "consumerDescription": "<2-3 sentence description of what this category means to consumers in ${input.countryName}. What problem does it solve? What aspiration does it serve?>",
-    "anchors": ["<5-8 strategic research pillars/themes for this category — e.g. 'Product Performance & Quality', 'Price & Value Perception', 'Brand Trust & Loyalty', 'Purchase Channels', 'Emerging Trends'>"],
-    "subCategories": [
-        {
-            "name": "<Sub-category group name>",
-            "anchors": ["<3-6 specific research anchors within this sub-category>"]
-        }
-    ],
-    "defaultKeywords": ["<50-80 high-relevance consumer search keywords for this category in ${input.countryName}. Mix of branded, generic, problem-solution, comparison, and purchase-intent queries. Must be terms real consumers would type into Google in ${input.language}. Include long-tail queries (3-5 words) not just head terms.>"],
-    "keyBrands": ["<8-15 key brands competing in this category in ${input.countryName}. Include both market leaders and notable challengers/D2C brands.>"]
+    "category": "<Professional category name>",
+    "consumerDescription": "<2-3 sentences about this category for consumers in ${input.countryName}>",
+    "anchors": ["<6-10 strategic research pillars>"],
+    "subCategories": [{"name": "<name>", "anchors": ["<4-8 anchors>"]}],
+    "defaultKeywords": ["<MUST be 200-250 keywords>"],
+    "keyBrands": ["<10-20 brands in ${input.countryName}>"]
 }
 
-RULES:
-1. Sub-categories: Generate 2-4 meaningful sub-category groups, each with 3-6 anchors.
-2. Keywords: Must be realistic search queries in ${input.language} for ${input.countryName}. Include "best", "vs", "review", "price", "buy" variations. No generic filler.
-3. Brands: Only include brands actually available/relevant in ${input.countryName}. Do NOT include global brands that don't operate there.
-4. Anchors: Should be strategic research themes, not product features. Think: "Purchase Decision Journey", "Sustainability Concerns", "Digital vs Offline Channel Mix".
-5. Be specific to ${input.countryName} — pricing in local currency context, local platforms (e.g. Flipkart/Amazon.in for India, Amazon.com for US), local consumer behaviours.
+CRITICAL KEYWORD RULES — your keywords will be checked against real Google search data. Bad keywords = zero volume = useless corpus.
 
-Output ONLY the JSON. No markdown, no explanations.`;
+GENERATE EXACTLY 200-250 KEYWORDS following this distribution:
+
+HEAD TERMS (40 keywords, 1-2 words):
+- Generic category terms: "paneer", "cottage cheese", "tofu"
+- Brand names alone: "Amul", "Mother Dairy"  
+- Category + modifier: "fresh paneer", "organic paneer", "malai paneer"
+
+MID-TAIL (100 keywords, 3-4 words):
+- "best paneer brand India"
+- "paneer price per kg"
+- "Amul paneer review"
+- "paneer vs tofu protein"
+- "buy paneer online"
+- "paneer making at home"
+- "low fat paneer brand"
+- "paneer nutrition per 100g"
+
+LONG-TAIL (80 keywords, 5+ words):
+- "how to check paneer is fresh"
+- "best paneer for butter masala"
+- "Amul paneer price 1 kg Delhi"
+- "is paneer good for weight loss"
+- "difference between paneer and cottage cheese"
+- "which brand paneer is best for cooking"
+
+FOR EACH of the top 10 brands, generate 5-8 brand-specific keywords:
+- "[Brand] paneer price"
+- "[Brand] paneer 1kg"
+- "[Brand] paneer review"
+- "[Brand] vs [Competitor]"
+- "is [Brand] paneer good"
+- "[Brand] paneer online"
+
+ALSO INCLUDE:
+- 20+ price queries: "paneer price", "cheap paneer", "paneer 500g price", "paneer rate today"
+- 20+ comparison queries: "[A] vs [B]", "paneer vs tofu", "fresh vs packaged paneer"  
+- 20+ problem/solution: "why paneer becomes hard", "how to store paneer", "paneer not setting"
+- 15+ purchase queries: "buy paneer online", "paneer near me", "paneer home delivery", "paneer on Amazon"
+- 10+ recipe/usage: "paneer tikka recipe", "paneer for gym", "paneer protein content"
+
+RULES:
+1. EVERY keyword must be something a real person types into Google. NOT research themes or anchor descriptions.
+2. Use ${input.language} language terms where consumers would naturally search in that language.
+3. Include local platforms: Flipkart, Amazon.in, BigBasket, Blinkit for India.
+4. NO duplicates. NO filler. NO academic phrases.
+5. The examples above use paneer — adapt ALL keywords to "${input.categoryText}" specifically.
+
+Output ONLY the JSON. No markdown.`;
 
     try {
         const response = await ai.models.generateContent({
             model: MODEL,
             contents: prompt,
+            config: {
+                maxOutputTokens: 16000,  // 200+ keywords = large JSON
+                temperature: 0.7,        // Some creativity for keyword variety
+            },
         });
 
         const raw = response?.text || '';
@@ -116,8 +154,8 @@ Output ONLY the JSON. No markdown, no explanations.`;
         if (parsed.anchors.length < 3) {
             return { ok: false, error: "AI generated too few anchors (need at least 3).", rawResponse: raw.substring(0, 500) };
         }
-        if (parsed.defaultKeywords.length < 20) {
-            return { ok: false, error: "AI generated too few keywords (need at least 20).", rawResponse: raw.substring(0, 500) };
+        if (parsed.defaultKeywords.length < 100) {
+            return { ok: false, error: `Only ${parsed.defaultKeywords.length} keywords generated (need 100+). Try again.`, rawResponse: raw.substring(0, 500) };
         }
 
         const category: AiGeneratedCategory = {

@@ -121,18 +121,36 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
             await PlatformDB.saveProject(finalProject);
             if (finalProject.generatedCategory) {
                 await PlatformDB.saveCategory(finalProject.generatedCategory.id, finalProject.generatedCategory);
-                // Pre-build corpus from generated keywords
-                const corpus = finalProject.generatedCategory.defaultKeywords.map((kw, idx) => ({
-                    keyword_id: `gen_${idx}`,
-                    keyword: kw,
-                    volume: 0,
-                    anchor_id: finalProject.generatedCategory!.anchors[idx % finalProject.generatedCategory!.anchors.length],
-                    intent_bucket: 'Discovery',
-                    status: 'active',
-                    active: true
-                }));
-                await PlatformDB.saveCorpus(finalProject.generatedCategory.id, corpus);
-                console.log(`[ScopeV2] Persisted project + corpus (${corpus.length} keywords) to IndexedDB`);
+                // Write seed corpus with correct SnapshotKeywordRow schema — DFS will overwrite
+                const gen = finalProject.generatedCategory!;
+                const subs = gen.subCategories || [];
+                const corpus = gen.defaultKeywords.map((kw: string, idx: number) => {
+                    const kwLower = kw.toLowerCase();
+                    // Intent classification
+                    let intent = 'NAVIGATIONAL';
+                    if (/\b(buy|price|cost|cheap|deal|discount|shop|order|where to buy|near me|online|delivery)\b/.test(kwLower)) intent = 'TRANSACTIONAL';
+                    else if (/\b(best|top|vs|versus|compare|review|rating|recommend|which)\b/.test(kwLower)) intent = 'COMMERCIAL';
+                    else if (/\b(how|what|why|when|guide|tips|does|can|should|is it|benefits|difference|calories|nutrition|protein|healthy)\b/.test(kwLower)) intent = 'INFORMATIONAL';
+                    // Anchor assignment — cycle through sub-categories
+                    const sub = subs[idx % Math.max(subs.length, 1)];
+                    const anchorId = sub?.name?.toLowerCase().replace(/[^a-z0-9]+/g, '_').substring(0, 30) || 'general';
+                    return {
+                        keyword_id: `seed_${gen.id}__${idx}`,
+                        keyword_text: kw,
+                        volume: null,
+                        anchor_id: anchorId,
+                        intent_bucket: intent,
+                        status: 'UNVERIFIED',
+                        active: false,
+                        language_code: finalProject.geo.language,
+                        country_code: finalProject.geo.country,
+                        category_id: gen.id,
+                        created_at_iso: new Date().toISOString(),
+                        validation_tier: 'AI_SEED',
+                    };
+                });
+                await PlatformDB.saveCorpus(gen.id, corpus);
+                console.log(`[ScopeV2] Seed corpus: ${corpus.length} keywords (UNVERIFIED, pending DFS)`);
             }
         } catch (e) {
             console.warn('[ScopeV2] IndexedDB persist failed, continuing anyway', e);

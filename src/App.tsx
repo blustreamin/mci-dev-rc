@@ -78,7 +78,7 @@ const AppInner: React.FC = () => {
         // Auto-trigger corpus build in background (non-blocking)
         import('./services/projectCorpusBuilder').then(({ ProjectCorpusBuilder }) => {
             console.log(`[App] Auto-triggering corpus build for project: ${project.projectName}`);
-            ProjectCorpusBuilder.buildCorpus(project, { forceRebuild: false }, (progress) => {
+            ProjectCorpusBuilder.buildCorpus(project, { forceRebuild: true }, (progress) => {
                 console.log(`[CorpusBuild] ${progress.phase}: ${progress.message}`);
             }).then(result => {
                 if (result.ok) {
