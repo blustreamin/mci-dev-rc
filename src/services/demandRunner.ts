@@ -150,44 +150,60 @@ export const DemandRunner = {
             }
 
             // D. Compute Metrics
-            // Extract top keywords for trend analysis (dynamic categories)
-            const topKeywordsForTrend = eligibleRows
-                .sort((a, b) => (b.volume || 0) - (a.volume || 0))
-                .slice(0, 5)
-                .map(r => r.keyword_text);
-            
-            // Try Gemini-based trend first, fall back to DFS-derived proxy
-            let trendLock = await getDeterministicTrend5y(categoryId, isBaselineMode, topKeywordsForTrend);
-            
-            // If trend is null/0, compute proxy from DFS competition data
-            if (!trendLock.value_percent && eligibleRows.length > 0) {
-                // DFS competition_index ranges 0-100. Higher competition = growing market.
-                // Average competition as a proxy for market momentum.
-                const competitionValues = eligibleRows
-                    .filter(r => r.competition !== undefined && r.competition !== null)
-                    .map(r => Number(r.competition) || 0);
-                
+            // TREND: Priority 1 = DFS monthly_searches trend (stored in demandScore), 2 = competition proxy, 3 = Gemini
+            let trendValue: number | null = null;
+            let trendLabel = 'Stable';
+            let trendSource = 'UNKNOWN';
+
+            // 1. Try corpus-level trend from DFS monthly_searches (stored in demandScore during corpus build)
+            const kwWithTrend = eligibleRows.filter(r => r.demandScore !== undefined && r.demandScore !== null && Number.isFinite(r.demandScore));
+            if (kwWithTrend.length >= 5) {
+                // Volume-weighted average trend
+                const totalVol = kwWithTrend.reduce((s, r) => s + (r.volume || 1), 0);
+                const weightedTrend = kwWithTrend.reduce((s, r) => s + (r.demandScore! * (r.volume || 1)), 0) / totalVol;
+                trendValue = parseFloat(weightedTrend.toFixed(1));
+                trendLabel = trendValue > 2 ? 'Growing' : trendValue < -2 ? 'Declining' : 'Stable';
+                trendSource = 'DFS_MONTHLY_SEARCHES';
+                console.log(`[DEMAND_ENGINE][TREND] DFS monthly trend: ${trendValue}% (${trendLabel}) from ${kwWithTrend.length} keywords`);
+            }
+
+            // 2. Fallback: competition proxy
+            if (trendValue === null && eligibleRows.length > 5) {
+                const competitionValues = eligibleRows.filter(r => r.competition !== undefined).map(r => Number(r.competition) || 0);
                 if (competitionValues.length > 5) {
-                    const avgCompetition = competitionValues.reduce((s, v) => s + v, 0) / competitionValues.length;
-                    // Map 0-100 competition to -10% to +20% trend proxy
-                    const proxyTrend = ((avgCompetition - 40) / 60) * 20;
-                    const clampedTrend = Math.max(-15, Math.min(25, parseFloat(proxyTrend.toFixed(1))));
-                    
-                    console.log(`[DEMAND_ENGINE][TREND_PROXY] avgCompetition=${avgCompetition.toFixed(1)} proxyTrend=${clampedTrend}% (from ${competitionValues.length} keywords)`);
-                    
-                    trendLock = {
-                        ...trendLock,
-                        value_percent: clampedTrend,
-                        trend_label: clampedTrend > 2 ? 'Growing' : clampedTrend < -2 ? 'Declining' : 'Stable',
-                        source: 'DFS_COMPETITION_PROXY' as any,
-                    };
+                    const avgComp = competitionValues.reduce((s, v) => s + v, 0) / competitionValues.length;
+                    trendValue = parseFloat((((avgComp - 40) / 60) * 20).toFixed(1));
+                    trendValue = Math.max(-15, Math.min(25, trendValue));
+                    trendLabel = trendValue > 2 ? 'Growing' : trendValue < -2 ? 'Declining' : 'Stable';
+                    trendSource = 'DFS_COMPETITION_PROXY';
+                    console.log(`[DEMAND_ENGINE][TREND] Competition proxy: ${trendValue}% (avg=${avgComp.toFixed(1)})`);
                 }
             }
 
+            // 3. Fallback: Gemini Google Trends (only for legacy categories)
+            if (trendValue === null && !isBaselineMode) {
+                const topKw = eligibleRows.sort((a, b) => (b.volume || 0) - (a.volume || 0)).slice(0, 5).map(r => r.keyword_text);
+                try {
+                    const trendLock = await getDeterministicTrend5y(categoryId, false, topKw);
+                    if (trendLock.value_percent !== null) {
+                        trendValue = trendLock.value_percent;
+                        trendLabel = trendLock.trend_label || 'Stable';
+                        trendSource = 'GEMINI_TRENDS';
+                    }
+                } catch (e) {
+                    console.warn(`[DEMAND_ENGINE][TREND] Gemini trends failed`, e);
+                }
+            }
+
+            // Final fallback
+            if (trendValue === null) { trendValue = 0; trendLabel = 'Stable'; trendSource = 'DEFAULT'; }
+
+            console.log(`[DEMAND_ENGINE][TREND_FINAL] value=${trendValue}% label=${trendLabel} source=${trendSource}`);
+
             const trendsForCalc = {
-                fiveYearTrendPct: trendLock.value_percent,
-                trendStatus: (trendLock.trend_label || 'UNKNOWN') as any,
-                trendError: trendLock.error,
+                fiveYearTrendPct: trendValue,
+                trendStatus: trendLabel as any,
+                trendError: undefined,
             };
 
             const v3Metrics = MetricsCalculatorV3.calculate(categoryId, corpusSnapshotId, eligibleRows, trendsForCalc);

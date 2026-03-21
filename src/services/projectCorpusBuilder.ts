@@ -88,6 +88,28 @@ function classifyIntent(keyword: string): string {
     return 'NAVIGATIONAL';
 }
 
+// Calculate trend % from DFS monthly_searches data
+function computeKeywordTrend(monthly: { year: number; month: number; search_volume: number }[] | undefined): { trendPct: number | null; months: number; method: string } {
+    if (!monthly || monthly.length < 4) return { trendPct: null, months: 0, method: 'NO_DATA' };
+    
+    // Sort by date (oldest first)
+    const sorted = [...monthly].sort((a, b) => a.year !== b.year ? a.year - b.year : a.month - b.month);
+    const n = sorted.length;
+    
+    // Split into first half and second half
+    const half = Math.floor(n / 2);
+    const firstHalf = sorted.slice(0, half);
+    const secondHalf = sorted.slice(half);
+    
+    const avgFirst = firstHalf.reduce((s, m) => s + (m.search_volume || 0), 0) / firstHalf.length;
+    const avgSecond = secondHalf.reduce((s, m) => s + (m.search_volume || 0), 0) / secondHalf.length;
+    
+    if (avgFirst === 0) return { trendPct: avgSecond > 0 ? 100 : 0, months: n, method: 'ZERO_BASE' };
+    
+    const trendPct = parseFloat((((avgSecond - avgFirst) / avgFirst) * 100).toFixed(1));
+    return { trendPct, months: n, method: n >= 12 ? 'ANNUAL' : `${n}M` };
+}
+
 function dfsRowToSnapshotRow(
     dfsRow: DataForSeoRow,
     categoryId: string,
@@ -99,6 +121,7 @@ function dfsRowToSnapshotRow(
 ): SnapshotKeywordRow {
     const volume = dfsRow.search_volume ?? null;
     const isZero = volume === null || volume === 0;
+    const trend = computeKeywordTrend(dfsRow.monthly_searches);
 
     return {
         keyword_id: slugifyKeywordId(dfsRow.keyword, categoryId),
@@ -109,13 +132,14 @@ function dfsRowToSnapshotRow(
         anchor_id: assignAnchor(dfsRow.keyword, category, index),
         intent_bucket: classifyIntent(dfsRow.keyword),
         status: isZero ? 'ZERO' : 'VALID',
-        active: !isZero, // Zero-volume keywords are inactive by default
+        active: !isZero,
         language_code: language,
         country_code: countryCode,
         category_id: categoryId,
         created_at_iso: new Date().toISOString(),
         validated_at_iso: new Date().toISOString(),
         validation_tier: source === 'SEED' ? 'AI_GENERATED' : 'DFS_DISCOVERED',
+        demandScore: trend.trendPct ?? undefined,  // Store trend in demandScore field
     };
 }
 

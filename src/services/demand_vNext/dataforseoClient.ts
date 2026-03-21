@@ -9,10 +9,11 @@ const TIMEOUT_PROXY_MS = 60000;
 export interface DataForSeoRow {
     keyword: string;
     search_volume?: number;
-    amazon_volume?: number; // Normalized field for amazon
+    amazon_volume?: number;
     cpc: number;
     competition_index: number;
     competition: number;
+    monthly_searches?: { year: number; month: number; search_volume: number }[];
     [key: string]: any;
 }
 
@@ -48,6 +49,9 @@ function extractVolumeRows(data: any): { rows: DataForSeoRow[], meta: any } {
         }
         if (item.amazon_search_volume !== undefined) {
             row.amazon_volume = item.amazon_search_volume;
+        }
+        if (Array.isArray(item.monthly_searches) && item.monthly_searches.length > 0) {
+            row.monthly_searches = item.monthly_searches;
         }
         return row;
     };
