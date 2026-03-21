@@ -1,0 +1,13 @@
+diff --git a/src/services/categoryGenerationService.ts b/src/services/categoryGenerationService.ts
+index 3b5623e..a4686b7 100644
+--- a/src/services/categoryGenerationService.ts
++++ b/src/services/categoryGenerationService.ts
+@@ -9,7 +9,7 @@
+ import { GoogleGenAI } from "@google/genai";
+ import { AiGeneratedCategory, IndustryId } from '../config/projectContext';
+ 
+-const MODEL = 'gemini-2.5-flash-preview-05-20';
++const MODEL = 'gemini-2.0-flash';
+ 
+ function getApiKey(): string | undefined {
+     if (typeof process !== 'undefined' && process.env?.API_KEY) return process.env.API_KEY;
