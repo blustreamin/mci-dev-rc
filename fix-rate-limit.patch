@@ -1,0 +1,248 @@
+diff --git a/src/services/categoryGenerationService.ts b/src/services/categoryGenerationService.ts
+index f0e5c6b..3b5623e 100644
+--- a/src/services/categoryGenerationService.ts
++++ b/src/services/categoryGenerationService.ts
+@@ -1,17 +1,15 @@
+ /**
+- * Category Generation Service
++ * Category Generation Service — Multi-Call Approach
+  * 
+- * Takes a free-text category description + geography context and uses Gemini
+- * to generate a full CategoryBaseline-compatible config (anchors, sub-categories,
+- * seed keywords, key brands).
+- * 
+- * This replaces the need for hardcoded CORE_CATEGORIES for new projects.
++ * Call 1: Category structure + 150 seed keywords
++ * Calls 2-4: 150 keywords each (brand, informational, long-tail)
++ * Total: 500-600 unique keywords without hitting rate limits
+  */
+ 
+ import { GoogleGenAI } from "@google/genai";
+ import { AiGeneratedCategory, IndustryId } from '../config/projectContext';
+ 
+-const MODEL = 'gemini-3-flash-preview';
++const MODEL = 'gemini-2.5-flash-preview-05-20';
+ 
+ function getApiKey(): string | undefined {
+     if (typeof process !== 'undefined' && process.env?.API_KEY) return process.env.API_KEY;
+@@ -27,17 +25,11 @@ function safeParseJSON(input: string): any {
+ }
+ 
+ function slugify(text: string): string {
+-    return text
+-        .toLowerCase()
+-        .replace(/[^a-z0-9\s-]/g, '')
+-        .replace(/\s+/g, '-')
+-        .replace(/-+/g, '-')
+-        .substring(0, 40)
+-        .replace(/^-|-$/g, '');
++    return text.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-').substring(0, 40).replace(/^-|-$/g, '');
+ }
+ 
+ export interface CategoryGenerationInput {
+-    categoryText: string;     // "premium dog food", "electric two-wheelers", etc.
++    categoryText: string;
+     industry: IndustryId;
+     countryName: string;
+     countryCode: string;
+@@ -55,111 +47,110 @@ export async function generateCategoryConfig(
+     input: CategoryGenerationInput
+ ): Promise<CategoryGenerationResult> {
+     const apiKey = getApiKey();
+-    if (!apiKey) {
+-        return { ok: false, error: "Gemini API key not configured." };
+-    }
++    if (!apiKey) return { ok: false, error: "Gemini API key not configured." };
+ 
+     const ai = new GoogleGenAI({ apiKey });
+ 
+-    const prompt = `You are a search keyword researcher building a keyword corpus for consumer market research. Your keywords will be validated against Google Ads search volume data via DataForSEO.
++    // --- CALL 1: Structure + 150 seed keywords ---
++    const prompt1 = `You are a search keyword researcher. Keywords will be validated against Google Ads volume data.
+ 
+ Category: "${input.categoryText}"
+ Industry: ${input.industry}
+ Country: ${input.countryName} (${input.countryCode})
+ Language: ${input.language}
+ 
+-Generate JSON with this schema:
++Generate JSON:
+ {
+     "category": "<Professional category name>",
+     "consumerDescription": "<2-3 sentences about this category for consumers in ${input.countryName}>",
+     "anchors": ["<6-10 strategic research pillars>"],
+-    "subCategories": [{"name": "<name>", "anchors": ["<4-8 anchors>"]}],
+-    "defaultKeywords": ["<MUST be 500-700 keywords>"],
++    "subCategories": [{"name": "<n>", "anchors": ["<4-8 anchors>"]}],
++    "defaultKeywords": ["<EXACTLY 150 search keywords>"],
+     "keyBrands": ["<10-20 brands in ${input.countryName}>"]
+ }
+ 
+-CRITICAL KEYWORD RULES — your keywords will be checked against real Google search data. Bad keywords = zero volume = useless corpus.
+-
+-GENERATE 500-700 KEYWORDS following this distribution:
+-
+-HEAD TERMS (100 keywords, 1-2 words):
+-- Generic category terms: "paneer", "cottage cheese", "tofu"
+-- Brand names alone: "Amul", "Mother Dairy"  
+-- Category + modifier: "fresh paneer", "organic paneer", "malai paneer"
+-
+-MID-TAIL (250 keywords, 3-4 words):
+-- "best paneer brand India"
+-- "paneer price per kg"
+-- "Amul paneer review"
+-- "paneer vs tofu protein"
+-- "buy paneer online"
+-- "paneer making at home"
+-- "low fat paneer brand"
+-- "paneer nutrition per 100g"
+-
+-LONG-TAIL (200 keywords, 5+ words):
+-- "how to check paneer is fresh"
+-- "best paneer for butter masala"
+-- "Amul paneer price 1 kg Delhi"
+-- "is paneer good for weight loss"
+-- "difference between paneer and cottage cheese"
+-- "which brand paneer is best for cooking"
+-
+-FOR EACH of the top 10 brands, generate 5-8 brand-specific keywords:
+-- "[Brand] paneer price"
+-- "[Brand] paneer 1kg"
+-- "[Brand] paneer review"
+-- "[Brand] vs [Competitor]"
+-- "is [Brand] paneer good"
+-- "[Brand] paneer online"
+-
+-ALSO INCLUDE:
+-- 20+ price queries: "paneer price", "cheap paneer", "paneer 500g price", "paneer rate today"
+-- 20+ comparison queries: "[A] vs [B]", "paneer vs tofu", "fresh vs packaged paneer"  
+-- 20+ problem/solution: "why paneer becomes hard", "how to store paneer", "paneer not setting"
+-- 15+ purchase queries: "buy paneer online", "paneer near me", "paneer home delivery", "paneer on Amazon"
+-- 10+ recipe/usage: "paneer tikka recipe", "paneer for gym", "paneer protein content"
+-
+-RULES:
+-1. EVERY keyword must be something a real person types into Google. NOT research themes or anchor descriptions.
+-2. Use ${input.language} language terms where consumers would naturally search in that language.
+-3. Include local platforms: Flipkart, Amazon.in, BigBasket, Blinkit for India.
+-4. NO duplicates. NO filler. NO academic phrases.
+-5. The examples above use paneer — adapt ALL keywords to "${input.categoryText}" specifically.
+-6. CRITICAL: Every keyword MUST be directly about "${input.categoryText}". Do NOT include keywords about substitute or adjacent categories (e.g., for paneer do NOT include "tofu", "cottage cheese", "cheese", "curd" as standalone terms — only include them in comparison queries like "paneer vs tofu").
+-7. At least 80% of keywords must contain the core product term or a close variant of "${input.categoryText}".
++KEYWORD RULES:
++- Every keyword = a real Google search query people in ${input.countryName} would type.
++- Mix: 30 head terms (1-2 words), 70 mid-tail (3-4 words), 50 long-tail (5+ words).
++- Include: brand queries, price queries, "best X", "X vs Y", "how to", "X review", "buy X online".
++- 80%+ must contain "${input.categoryText}" or a close variant.
++- Specific to ${input.countryName}. Use local platforms and currency.
++- NO duplicates. NO academic phrases. NO standalone substitute-product terms.
+ 
+-Output ONLY the JSON. No markdown.`;
++Output ONLY JSON.`;
+ 
+     try {
+-        const response = await ai.models.generateContent({
++        console.log(`[CategoryGen] Call 1/4: Structure + 150 keywords...`);
++        const resp1 = await ai.models.generateContent({
+             model: MODEL,
+-            contents: prompt,
+-            config: {
+-                maxOutputTokens: 32000,  // 200+ keywords = large JSON
+-                temperature: 0.7,        // Some creativity for keyword variety
+-            },
++            contents: prompt1,
++            config: { maxOutputTokens: 8000, temperature: 0.7 },
+         });
+ 
+-        const raw = response?.text || '';
+-        const parsed = safeParseJSON(raw);
+-
+-        if (!parsed || !parsed.category || !parsed.anchors || !parsed.defaultKeywords) {
+-            return { 
+-                ok: false, 
+-                error: "AI generated invalid structure. Missing required fields.", 
+-                rawResponse: raw.substring(0, 500) 
+-            };
++        const parsed = safeParseJSON(resp1?.text || '');
++        if (!parsed?.category || !parsed?.defaultKeywords) {
++            return { ok: false, error: "AI returned invalid structure.", rawResponse: (resp1?.text || '').substring(0, 500) };
+         }
+-
+-        // Validate minimum quality
+-        if (parsed.anchors.length < 3) {
+-            return { ok: false, error: "AI generated too few anchors (need at least 3).", rawResponse: raw.substring(0, 500) };
++        if ((parsed.anchors?.length || 0) < 3) {
++            return { ok: false, error: "Too few anchors." };
+         }
+-        if (parsed.defaultKeywords.length < 200) {
+-            return { ok: false, error: `Only ${parsed.defaultKeywords.length} keywords generated (need 100+). Try again.`, rawResponse: raw.substring(0, 500) };
++
++        let allKeywords: string[] = [...(parsed.defaultKeywords || [])];
++        const brands = parsed.keyBrands || [];
++        console.log(`[CategoryGen] Call 1 done: ${allKeywords.length} kw, ${brands.length} brands`);
++
++        // --- CALLS 2-4: Keyword expansion (150 each, 2s delay between) ---
++        const batches = [
++            { focus: 'brand-specific, price, and purchase-intent queries', detail: `For each brand (${brands.slice(0, 8).join(', ')}): "[brand] ${input.categoryText} price", "[brand] review", "[brand] vs [competitor]", "buy [brand] online". Also: "${input.categoryText} price per kg", "cheap ${input.categoryText}", "${input.categoryText} offer today".` },
++            { focus: 'informational, how-to, problem-solution queries', detail: `"how to store ${input.categoryText}", "is ${input.categoryText} good for health", "${input.categoryText} nutrition facts", "why does ${input.categoryText} become hard", "${input.categoryText} calories", "${input.categoryText} benefits for gym", "homemade ${input.categoryText} recipe".` },
++            { focus: 'comparison, long-tail, and niche queries', detail: `"${input.categoryText} vs [alternative]", "best ${input.categoryText} brand in [city]", "${input.categoryText} for [specific dish]", "organic vs regular ${input.categoryText}", "${input.categoryText} home delivery [city]", "which ${input.categoryText} is best for [use case]".` },
++        ];
++
++        for (let i = 0; i < batches.length; i++) {
++            await new Promise(r => setTimeout(r, 2500)); // Rate limit safety
++
++            const b = batches[i];
++            const expandPrompt = `Generate EXACTLY 150 Google search keywords for "${parsed.category}" in ${input.countryName}.
++
++Focus: ${b.focus}
++Examples: ${b.detail}
++
++RULES:
++- Real search queries only. Things people actually type into Google.
++- 80%+ must contain "${input.categoryText}" or a variant.
++- NO duplicates with existing keywords.
++- Specific to ${input.countryName} market, ${input.language} language.
++
++Output ONLY a JSON array: ["keyword1", "keyword2", ...]`;
++
++            try {
++                console.log(`[CategoryGen] Call ${i + 2}/4: ${b.focus}...`);
++                const resp = await ai.models.generateContent({
++                    model: MODEL,
++                    contents: expandPrompt,
++                    config: { maxOutputTokens: 5000, temperature: 0.8 },
++                });
++                const expanded = safeParseJSON(resp?.text || '');
++                if (Array.isArray(expanded)) {
++                    allKeywords.push(...expanded.filter((k: string) => typeof k === 'string' && k.length > 2));
++                    console.log(`[CategoryGen] Call ${i + 2} done: +${expanded.length} (total: ${allKeywords.length})`);
++                }
++            } catch (e: any) {
++                console.warn(`[CategoryGen] Expansion ${i + 2} failed: ${e.message}`);
++            }
+         }
+ 
++        // Deduplicate
++        const seen = new Set<string>();
++        allKeywords = allKeywords.filter(kw => {
++            const key = kw.toLowerCase().trim();
++            if (seen.has(key) || key.length < 2) return false;
++            seen.add(key);
++            return true;
++        });
++
++        console.log(`[CategoryGen] Final: ${allKeywords.length} unique keywords`);
++
+         const category: AiGeneratedCategory = {
+             id: slugify(parsed.category),
+             category: parsed.category,
+@@ -169,8 +160,8 @@ Output ONLY the JSON. No markdown.`;
+                 name: sc.name || 'General',
+                 anchors: sc.anchors || [],
+             })),
+-            defaultKeywords: parsed.defaultKeywords || [],
+-            keyBrands: parsed.keyBrands || [],
++            defaultKeywords: allKeywords,
++            keyBrands: brands,
+             generatedAt: new Date().toISOString(),
+         };
+ 
