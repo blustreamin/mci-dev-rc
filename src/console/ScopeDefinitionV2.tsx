@@ -103,7 +103,7 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
         }));
     };
 
-    const handleProceed = () => {
+    const handleProceed = async () => {
         const finalProject: ProjectDefinition = {
             ...project,
             geo: {
@@ -114,6 +114,30 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
                 languageName: selectedCountry.languages.find(l => l.code === selectedLanguage)?.name || selectedLanguage,
             },
         };
+        
+        // Persist to IndexedDB
+        try {
+            const { PlatformDB } = await import('../services/platformDB');
+            await PlatformDB.saveProject(finalProject);
+            if (finalProject.generatedCategory) {
+                await PlatformDB.saveCategory(finalProject.generatedCategory.id, finalProject.generatedCategory);
+                // Pre-build corpus from generated keywords
+                const corpus = finalProject.generatedCategory.defaultKeywords.map((kw, idx) => ({
+                    keyword_id: `gen_${idx}`,
+                    keyword: kw,
+                    volume: 0,
+                    anchor_id: finalProject.generatedCategory!.anchors[idx % finalProject.generatedCategory!.anchors.length],
+                    intent_bucket: 'Discovery',
+                    status: 'active',
+                    active: true
+                }));
+                await PlatformDB.saveCorpus(finalProject.generatedCategory.id, corpus);
+                console.log(`[ScopeV2] Persisted project + corpus (${corpus.length} keywords) to IndexedDB`);
+            }
+        } catch (e) {
+            console.warn('[ScopeV2] IndexedDB persist failed, continuing anyway', e);
+        }
+        
         onProjectReady(finalProject);
     };
 

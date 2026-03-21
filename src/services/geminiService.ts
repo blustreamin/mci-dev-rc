@@ -262,7 +262,16 @@ export async function runPreSweepIntelligence(
     );
 
     // 6. Persistence
-    await OutputSnapshotStore.createOutputSnapshot(corpusSnapshotId, category.id, 'IN', 'en', undefined, preSweep, null);
+    if (isProjectCategory) {
+        // PROJECT MODE: Save to IndexedDB
+        const { PlatformDB } = await import('./platformDB');
+        await PlatformDB.saveCorpus(category.id, chunks.flat());
+        await PlatformDB.saveStrategyOutput(category.id, preSweep);
+        logFn({ timestamp: new Date().toISOString(), stage: 'Strategy', category: category.category, step: 'PERSIST', attempt: 1, status: 'Success', durationMs: 0, message: `[PROJECT_MODE] Saved to IndexedDB: corpus=${chunks.flat().length} rows` });
+    } else {
+        // LEGACY MODE: Save to Firestore
+        await OutputSnapshotStore.createOutputSnapshot(corpusSnapshotId, category.id, 'IN', 'en', undefined, preSweep, null);
+    }
     
     logFn({ timestamp: new Date().toISOString(), stage: 'Strategy', category: category.category, step: 'DONE', attempt: 1, status: 'Success', durationMs: Date.now() - startTime, message: `[CNA][DONE] status=SUCCESS.` });
 

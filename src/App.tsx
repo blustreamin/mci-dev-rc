@@ -162,7 +162,13 @@ const AppInner: React.FC = () => {
     }, [activeGear, onboardingSelection, scopeSelection, strategyResults, demandResults, deepDiveResults, playbookResults, isHydrating]);
 
     const handleReset = async () => {
-        if (confirm("HARD RESET: This will wipe all local caches, storage, and reload the application. Continue?")) {
+        if (confirm("HARD RESET: This will wipe all local caches, IndexedDB, and reload the application. Continue?")) {
+            try {
+                const { PlatformDB } = await import('./services/platformDB');
+                await PlatformDB.clearAll();
+            } catch (e) {
+                console.warn('Failed to clear IndexedDB', e);
+            }
             await hardRefreshApp();
         }
     };
