@@ -18,7 +18,7 @@ import { PlatformDB } from './platformDB';
 import { SnapshotKeywordRow } from '../types';
 
 // --- CONFIG ---
-const DFS_BATCH_SIZE = 50;          // DFS accepts up to ~700 keywords per call, but 50 is safer for latency
+const DFS_BATCH_SIZE = 100;         // DFS accepts up to 700; 100 per call = 5 calls for 500 keywords
 const DISCOVERY_SEED_COUNT = 10;    // Number of seed keywords for expansion
 const DISCOVERY_MAX_NEW = 100;      // Cap on discovered keywords to add
 const MIN_VOLUME_THRESHOLD = 0;     // Include zero-volume rows (mark them as ZERO status)
@@ -352,23 +352,24 @@ export const ProjectCorpusBuilder = {
                 processedKeywords: snapshotRows.length,
             });
 
-            // --- 5b. FILTER: Minimize zero-volume noise ---
-            // Keep all VALID rows, limit ZERO to max 20% of total, drop UNVERIFIED
-            const validRows = snapshotRows.filter(r => r.status === 'VALID');
-            const zeroRows = snapshotRows.filter(r => r.status === 'ZERO');
-            const maxZero = Math.max(20, Math.round(validRows.length * 0.25));
-            const keptZero = zeroRows.slice(0, maxZero);
-            const finalRows = [...validRows, ...keptZero];
+            // --- 5b. FILTER: Keep all DFS-verified rows, drop UNVERIFIED ---
+            // VALID = has volume, ZERO = DFS confirmed zero volume (still useful for coverage)
+            // UNVERIFIED = DFS didn't return data (drop these)
+            const dfsVerifiedRows = snapshotRows.filter(r => r.status === 'VALID' || r.status === 'ZERO');
+            const unverifiedRows = snapshotRows.filter(r => r.status === 'UNVERIFIED');
+            const finalRows = dfsVerifiedRows; // Keep ALL DFS-verified rows
             
-            console.log(`[CorpusBuilder] Corpus filter: ${validRows.length} valid + ${keptZero.length}/${zeroRows.length} zero kept (dropped ${snapshotRows.length - finalRows.length} low-value rows)`);
+            const validCount = dfsVerifiedRows.filter(r => r.status === 'VALID').length;
+            const zeroCount = dfsVerifiedRows.filter(r => r.status === 'ZERO').length;
+            console.log(`[CorpusBuilder] Corpus: ${validCount} valid + ${zeroCount} zero = ${finalRows.length} total (dropped ${unverifiedRows.length} unverified)`);
 
             // --- 6. SAVE TO PLATFORMDB ---
-            emit('SAVING', `Saving ${finalRows.length} rows to IndexedDB (${validRows.length} valid)...`);
+            emit('SAVING', `Saving ${finalRows.length} rows to IndexedDB (${validCount} valid)...`);
 
             const saved = await PlatformDB.saveCorpus(categoryId, finalRows);
             if (!saved) {
                 emit('FAILED', 'Failed to save corpus to IndexedDB');
-                return { ok: false, categoryId, totalRows: finalRows.length, validRows: validRows.length, zeroRows: keptZero.length, discoveredCount: discoveredRows.length, elapsedMs: Date.now() - startTime, error: 'SAVE_FAILED' };
+                return { ok: false, categoryId, totalRows: finalRows.length, validRows: validCount, zeroRows: zeroCount, discoveredCount: discoveredRows.length, elapsedMs: Date.now() - startTime, error: 'SAVE_FAILED' };
             }
 
             // Also save the project + category to PlatformDB for persistence
@@ -376,14 +377,14 @@ export const ProjectCorpusBuilder = {
             await PlatformDB.saveCategory(categoryId, gen);
 
             const elapsed = Date.now() - startTime;
-            emit('DONE', `Corpus built: ${finalRows.length} keywords (${validRows.length} valid) in ${(elapsed / 1000).toFixed(1)}s`);
+            emit('DONE', `Corpus built: ${finalRows.length} keywords (${validCount} valid) in ${(elapsed / 1000).toFixed(1)}s`);
 
             return {
                 ok: true,
                 categoryId,
                 totalRows: finalRows.length,
-                validRows: validRows.length,
-                zeroRows: keptZero.length,
+                validRows: validCount,
+                zeroRows: zeroCount,
                 discoveredCount: discoveredRows.length,
                 elapsedMs: elapsed,
             };
