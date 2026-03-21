@@ -1,0 +1,59 @@
+diff --git a/src/console/CorpusInspectorView.tsx b/src/console/CorpusInspectorView.tsx
+index 89e73b3..e2a1d2b 100644
+--- a/src/console/CorpusInspectorView.tsx
++++ b/src/console/CorpusInspectorView.tsx
+@@ -15,6 +15,8 @@ import { doc, onSnapshot } from 'firebase/firestore';
+ import { FirestoreClient } from '../services/firestoreClient';
+ import { SimpleErrorBoundary } from '../components/SimpleErrorBoundary';
+ import { KeywordDiagnosticsService } from '../services/keywordDiagnosticsService';
++import { useProjectStore } from '../config/ProjectStore';
++import { PlatformDB } from '../services/platformDB';
+ 
+ interface Props {
+     categoryId: string;
+@@ -241,6 +243,8 @@ const IntentBreakup: React.FC<{ rows: SnapshotKeywordRow[] }> = ({ rows }) => {
+ };
+ 
+ const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
++    const projectStore = useProjectStore();
++    const isProjectMode = projectStore.hasProject;
+     const [rows, setRows] = useState<SnapshotKeywordRow[]>([]);
+     const [loading, setLoading] = useState(false);
+     const [error, setError] = useState<string | null>(null);
+@@ -283,7 +287,7 @@ const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
+             const volB = b.volume ?? 0;
+             if (volB !== volA) return volB - volA;
+             // Secondary: Keyword Text ASC
+-            return a.keyword_text.localeCompare(b.keyword_text);
++            return (a.keyword_text || '').localeCompare(b.keyword_text || '');
+         });
+     }, [rows]);
+ 
+@@ -303,6 +307,27 @@ const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
+         setLoading(true);
+         setError(null);
+         try {
++            // PROJECT MODE: Try PlatformDB (IndexedDB) first for dynamic categories
++            if (isProjectMode) {
++                log(`[CORPUS_INSPECTOR][PROJECT_MODE] Checking PlatformDB for ${categoryId}...`);
++                const platformCorpus = await PlatformDB.getCorpus(categoryId);
++                if (platformCorpus && platformCorpus.rows && platformCorpus.rows.length > 0) {
++                    setSnapshotId(`platformdb_${categoryId}`);
++                    setRows(platformCorpus.rows);
++                    setCurrentPage(1);
++                    log(`[CORPUS_INSPECTOR][PLATFORMDB_OK] Loaded ${platformCorpus.rows.length} rows from IndexedDB`);
++                    setLoading(false);
++                    return;
++                }
++                // No corpus in PlatformDB — don't fall through to Firestore for dynamic categories
++                log(`[CORPUS_INSPECTOR][PROJECT_MODE] No corpus yet. Use "Build Corpus" to fetch DFS volumes.`);
++                setError('No corpus data yet. Click "Build Corpus" to fetch keyword volumes from DataForSEO.');
++                setRows([]);
++                setLoading(false);
++                return;
++            }
++
++            // LEGACY MODE: Resolve from Firestore snapshot
+             log(`[CORPUS_INSPECTOR] Resolving snapshot for ${categoryId}...`);
+             const res = await SnapshotResolver.resolveActiveSnapshot(categoryId, 'IN', 'en');
+             
