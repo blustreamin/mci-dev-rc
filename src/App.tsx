@@ -5,6 +5,7 @@ import { DemandSweepView } from './console/DemandSweepView';
 import { ScopeDefinition } from './console/ScopeDefinition';
 import { ScopeDefinitionV2 } from './console/ScopeDefinitionV2';
 import { ProjectDefinition, projectToCategories } from './config/projectContext';
+import { ProjectProvider, useProjectStore } from './config/ProjectStore';
 import { TaskExecutionModal } from './console/TaskExecutionModal';
 import { AuditView } from './console/AuditView';
 import { ImageLabView } from './console/ImageLabView';
@@ -32,7 +33,7 @@ import { DemandOutputStore, DEMAND_OUTPUT_VERSION } from './services/demandOutpu
 import { WindowingService } from './services/windowing';
 import './dev/versionGuard';
 
-const App: React.FC = () => {
+const AppInner: React.FC = () => {
     const [isHydrating, setIsHydrating] = useState(true);
     const [activeGear, setActiveGear] = useState<string>('ONBOARDING');
     const [activeJobId, setActiveJobId] = useState<string | null>(null);
@@ -52,10 +53,12 @@ const App: React.FC = () => {
     const [onboardingSelection, setOnboardingSelection] = useState<Record<string, boolean>>({});
     const [scopeSelection, setScopeSelection] = useState<any>({});
     const [activeProject, setActiveProject] = useState<ProjectDefinition | null>(null);
+    const projectStore = useProjectStore();
     
-    // Bridge: When new ScopeDefinitionV2 completes, convert to legacy format for downstream gears
+    // Bridge: When new ScopeDefinitionV2 completes, set ProjectStore + legacy format for downstream gears
     const handleProjectReady = (project: ProjectDefinition) => {
         setActiveProject(project);
+        projectStore.setProject(project); // NEW: Set global project context
         const categories = projectToCategories(project);
         if (categories.length > 0) {
             const newSelection: Record<string, boolean> = {};
@@ -173,7 +176,9 @@ const App: React.FC = () => {
     };
 
     const runStrategy = async (ids?: string[]) => {
-        const targetIds = ids || CORE_CATEGORIES.filter(c => onboardingSelection[c.id]).map(c => c.id);
+        // Use project categories if available, fall back to legacy CORE_CATEGORIES
+        const availableCategories = projectStore.hasProject ? projectStore.categories : CORE_CATEGORIES;
+        const targetIds = ids || availableCategories.filter(c => onboardingSelection[c.id]).map(c => c.id);
         
         if (targetIds.length === 0) {
             console.warn("No categories selected for Strategy Run");
@@ -181,16 +186,17 @@ const App: React.FC = () => {
         }
 
         for (const catId of targetIds) {
-            const cat = CORE_CATEGORIES.find(c => c.id === catId);
+            const cat = availableCategories.find(c => c.id === catId);
             if (!cat) continue;
 
             const job = await startJob('BUILD_STRATEGY', cat.id);
-            console.log(`[OK] CONSUMER_NEED Started. categoryId=${cat.id} month=India/en`);
+            const countryName = projectStore.hasProject ? projectStore.countryName : 'India';
+            console.log(`[OK] CONSUMER_NEED Started. categoryId=${cat.id} market=${countryName}`);
 
             try {
                 await JobRunner.runStep(job, 'Calling Model', async () => {
                     const logFn = (l: AuditLogEntry) => JobRunner.updateJob(job, { logs: [...(job.logs||[]), l.message] });
-                    const res = await runPreSweepIntelligence(cat, 'India', logFn, new AbortController().signal);
+                    const res = await runPreSweepIntelligence(cat, countryName as any, logFn, new AbortController().signal);
                     
                     if (res.ok) {
                         const fetchable: FetchableData<PreSweepData> = {
@@ -414,11 +420,11 @@ const App: React.FC = () => {
                     )}
                     {activeGear === 'STRATEGY' && (
                         <StrategyView 
-                            categories={[]} 
+                            categories={projectStore.hasProject ? projectStore.categories : []} 
                             results={strategyResults} 
                             onRun={runStrategy} 
                             onRunDemand={runDemand} 
-                            onboardingSelection={onboardingSelection} 
+                            onboardingSelection={projectStore.hasProject ? projectStore.selectionMap : onboardingSelection} 
                             setOnboardingSelection={setOnboardingSelection} 
                             onUpdateResult={()=>{}} 
                         />
@@ -455,5 +461,11 @@ const App: React.FC = () => {
         </div>
     );
 };
+
+const App: React.FC = () => (
+    <ProjectProvider>
+        <AppInner />
+    </ProjectProvider>
+);
 
 export default App;

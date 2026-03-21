@@ -82,7 +82,7 @@ Generate STRICT JSON with this exact schema:
             "anchors": ["<3-6 specific research anchors within this sub-category>"]
         }
     ],
-    "defaultKeywords": ["<20-30 high-relevance consumer search keywords for this category in ${input.countryName}. Mix of branded, generic, problem-solution, and comparison queries. Must be terms real consumers would type into Google in ${input.language}.>"],
+    "defaultKeywords": ["<50-80 high-relevance consumer search keywords for this category in ${input.countryName}. Mix of branded, generic, problem-solution, comparison, and purchase-intent queries. Must be terms real consumers would type into Google in ${input.language}. Include long-tail queries (3-5 words) not just head terms.>"],
     "keyBrands": ["<8-15 key brands competing in this category in ${input.countryName}. Include both market leaders and notable challengers/D2C brands.>"]
 }
 
@@ -116,8 +116,8 @@ Output ONLY the JSON. No markdown, no explanations.`;
         if (parsed.anchors.length < 3) {
             return { ok: false, error: "AI generated too few anchors (need at least 3).", rawResponse: raw.substring(0, 500) };
         }
-        if (parsed.defaultKeywords.length < 10) {
-            return { ok: false, error: "AI generated too few keywords (need at least 10).", rawResponse: raw.substring(0, 500) };
+        if (parsed.defaultKeywords.length < 20) {
+            return { ok: false, error: "AI generated too few keywords (need at least 20).", rawResponse: raw.substring(0, 500) };
         }
 
         const category: AiGeneratedCategory = {

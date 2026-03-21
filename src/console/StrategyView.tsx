@@ -160,7 +160,7 @@ const SnapshotWidget: React.FC<{ category?: CategoryBaseline }> = ({ category })
 };
 
 export const StrategyView: React.FC<StrategyViewProps> = ({ 
-    results, onRun, onRunDemand, onRunDeepDive, onRunPlaybook, onboardingSelection, setOnboardingSelection, onUpdateResult 
+    categories, results, onRun, onRunDemand, onRunDeepDive, onRunPlaybook, onboardingSelection, setOnboardingSelection, onUpdateResult 
 }) => {
     const [expandedCat, setExpandedCat] = useState<string | null>(null);
     const [isGenerating, setIsGenerating] = useState(false);
@@ -168,8 +168,11 @@ export const StrategyView: React.FC<StrategyViewProps> = ({
     const [monthId, setMonthId] = useState(WindowingService.getCurrentMonthWindowId());
     const [csvAvailability, setCsvAvailability] = useState<Record<string, boolean>>({});
     
-    const selectedCategories = CORE_CATEGORIES.filter(c => onboardingSelection[c.id]);
+    // Use project categories if provided, otherwise fall back to CORE_CATEGORIES
+    const availableCategories = categories.length > 0 ? categories : CORE_CATEGORIES;
+    const selectedCategories = availableCategories.filter(c => onboardingSelection[c.id]);
     const activeCategory = selectedCategories.length > 0 ? selectedCategories[0] : undefined;
+    const isProjectMode = categories.length > 0;
 
     // Load persisted output if available
     useEffect(() => {
@@ -190,14 +193,14 @@ export const StrategyView: React.FC<StrategyViewProps> = ({
     useEffect(() => {
         const checkAvailability = async () => {
             const map: Record<string, boolean> = {};
-            for (const cat of CORE_CATEGORIES) {
+            for (const cat of availableCategories) {
                 const meta = await SeedStore.getSeedMeta(cat.id, monthId);
                 map[cat.id] = meta?.status === 'PROCESSED';
             }
             setCsvAvailability(map);
         };
         checkAvailability();
-    }, [monthId]);
+    }, [monthId, availableCategories]);
 
     const toggleSelection = (catId: string) => {
         setOnboardingSelection(prev => ({ ...prev, [catId]: !prev[catId] }));
@@ -310,41 +313,74 @@ export const StrategyView: React.FC<StrategyViewProps> = ({
 
                     <div className="w-full lg:w-80 shrink-0 bg-slate-50/50 rounded-2xl p-6 border border-slate-100">
                         <div className="flex items-center justify-between mb-4">
-                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Scope Selection</span>
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                                {isProjectMode ? 'Project Scope' : 'Scope Selection'}
+                            </span>
                             <span className="bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full text-[10px] font-black">{selectedCategories.length}</span>
                         </div>
                         
-                        <div className="flex flex-wrap gap-2 mb-6">
-                            {CORE_CATEGORIES.map(cat => {
-                                const isSelected = !!onboardingSelection[cat.id];
-                                const hasCsv = csvAvailability[cat.id];
-                                return (
-                                    <button
-                                        key={cat.id}
-                                        onClick={() => toggleSelection(cat.id)}
-                                        className={`
-                                            group relative px-3 py-1.5 rounded-lg text-[10px] font-bold border transition-all flex items-center gap-1.5
-                                            ${isSelected 
-                                                ? 'bg-slate-800 text-white border-slate-800 shadow-md' 
-                                                : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
-                                            }
-                                        `}
-                                    >
-                                        {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
-                                        {cat.category}
-                                        <span className={`
-                                            ml-1 px-1.5 py-0.5 rounded-[4px] text-[8px] tracking-tight uppercase font-black
-                                            ${isSelected 
-                                                ? (hasCsv ? 'bg-emerald-500/30 text-emerald-100' : 'bg-amber-500/30 text-amber-100')
-                                                : (hasCsv ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400')
-                                            }
-                                        `}>
-                                            {hasCsv ? 'CSV' : 'LLM'}
-                                        </span>
-                                    </button>
-                                );
-                            })}
-                        </div>
+                        {isProjectMode ? (
+                            <div className="space-y-3 mb-6">
+                                {availableCategories.map(cat => (
+                                    <div key={cat.id} className="bg-white p-3 rounded-xl border-2 border-blue-200 shadow-sm">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <div className="w-5 h-5 bg-blue-600 rounded flex items-center justify-center">
+                                                <Check className="w-3 h-3 text-white stroke-[3]" />
+                                            </div>
+                                            <span className="font-bold text-sm text-slate-900">{cat.category}</span>
+                                        </div>
+                                        <p className="text-[10px] text-slate-500 leading-relaxed mb-2">{cat.consumerDescription}</p>
+                                        <div className="flex flex-wrap gap-1">
+                                            {cat.anchors.slice(0, 4).map((a, i) => (
+                                                <span key={i} className="px-1.5 py-0.5 bg-blue-50 text-blue-600 text-[8px] font-bold rounded">{a}</span>
+                                            ))}
+                                            {cat.anchors.length > 4 && (
+                                                <span className="px-1.5 py-0.5 bg-slate-100 text-slate-400 text-[8px] font-bold rounded">+{cat.anchors.length - 4}</span>
+                                            )}
+                                        </div>
+                                        <div className="mt-2 flex items-center gap-2 text-[9px] text-slate-400">
+                                            <span>{cat.defaultKeywords.length} keywords</span>
+                                            <span>·</span>
+                                            <span>{cat.keyBrands.length} brands</span>
+                                            <span>·</span>
+                                            <span className="text-emerald-500 font-bold">AI Generated</span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="flex flex-wrap gap-2 mb-6">
+                                {CORE_CATEGORIES.map(cat => {
+                                    const isSelected = !!onboardingSelection[cat.id];
+                                    const hasCsv = csvAvailability[cat.id];
+                                    return (
+                                        <button
+                                            key={cat.id}
+                                            onClick={() => toggleSelection(cat.id)}
+                                            className={`
+                                                group relative px-3 py-1.5 rounded-lg text-[10px] font-bold border transition-all flex items-center gap-1.5
+                                                ${isSelected 
+                                                    ? 'bg-slate-800 text-white border-slate-800 shadow-md' 
+                                                    : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
+                                                }
+                                            `}
+                                        >
+                                            {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                                            {cat.category}
+                                            <span className={`
+                                                ml-1 px-1.5 py-0.5 rounded-[4px] text-[8px] tracking-tight uppercase font-black
+                                                ${isSelected 
+                                                    ? (hasCsv ? 'bg-emerald-500/30 text-emerald-100' : 'bg-amber-500/30 text-amber-100')
+                                                    : (hasCsv ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400')
+                                                }
+                                            `}>
+                                                {hasCsv ? 'CSV' : 'LLM'}
+                                            </span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
 
                         <button 
                             onClick={handleRunStrategy}

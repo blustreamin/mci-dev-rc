@@ -1,0 +1,385 @@
+From e714d7e7cab2c8328ccb71f43e759aae5bf75e14 Mon Sep 17 00:00:00 2001
+From: Venkat <venkat@blustream.in>
+Date: Sat, 21 Mar 2026 04:45:29 +0000
+Subject: [PATCH] feat: ProjectStore + rewired Consumer Needs + keyword boost
+
+- ProjectStore (React Context): central runtime state replacing CORE_CATEGORIES
+- App.tsx: wraps in ProjectProvider, runStrategy uses project categories + dynamic country
+- StrategyView: project-mode shows AI-generated scope, legacy mode preserved as fallback
+- Category generation: bumped seed keywords to 50-80, validation threshold to 20
+- Consumer Needs now receives project categories directly from Scope output
+---
+ src/App.tsx                               |  28 ++++--
+ src/config/ProjectStore.tsx               |  92 ++++++++++++++++++
+ src/console/StrategyView.tsx              | 108 ++++++++++++++--------
+ src/services/categoryGenerationService.ts |   6 +-
+ 4 files changed, 187 insertions(+), 47 deletions(-)
+ create mode 100644 src/config/ProjectStore.tsx
+
+diff --git a/src/App.tsx b/src/App.tsx
+index 15429a2..5ac1fec 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -5,6 +5,7 @@ import { DemandSweepView } from './console/DemandSweepView';
+ import { ScopeDefinition } from './console/ScopeDefinition';
+ import { ScopeDefinitionV2 } from './console/ScopeDefinitionV2';
+ import { ProjectDefinition, projectToCategories } from './config/projectContext';
++import { ProjectProvider, useProjectStore } from './config/ProjectStore';
+ import { TaskExecutionModal } from './console/TaskExecutionModal';
+ import { AuditView } from './console/AuditView';
+ import { ImageLabView } from './console/ImageLabView';
+@@ -32,7 +33,7 @@ import { DemandOutputStore, DEMAND_OUTPUT_VERSION } from './services/demandOutpu
+ import { WindowingService } from './services/windowing';
+ import './dev/versionGuard';
+ 
+-const App: React.FC = () => {
++const AppInner: React.FC = () => {
+     const [isHydrating, setIsHydrating] = useState(true);
+     const [activeGear, setActiveGear] = useState<string>('ONBOARDING');
+     const [activeJobId, setActiveJobId] = useState<string | null>(null);
+@@ -52,10 +53,12 @@ const App: React.FC = () => {
+     const [onboardingSelection, setOnboardingSelection] = useState<Record<string, boolean>>({});
+     const [scopeSelection, setScopeSelection] = useState<any>({});
+     const [activeProject, setActiveProject] = useState<ProjectDefinition | null>(null);
++    const projectStore = useProjectStore();
+     
+-    // Bridge: When new ScopeDefinitionV2 completes, convert to legacy format for downstream gears
++    // Bridge: When new ScopeDefinitionV2 completes, set ProjectStore + legacy format for downstream gears
+     const handleProjectReady = (project: ProjectDefinition) => {
+         setActiveProject(project);
++        projectStore.setProject(project); // NEW: Set global project context
+         const categories = projectToCategories(project);
+         if (categories.length > 0) {
+             const newSelection: Record<string, boolean> = {};
+@@ -173,7 +176,9 @@ const App: React.FC = () => {
+     };
+ 
+     const runStrategy = async (ids?: string[]) => {
+-        const targetIds = ids || CORE_CATEGORIES.filter(c => onboardingSelection[c.id]).map(c => c.id);
++        // Use project categories if available, fall back to legacy CORE_CATEGORIES
++        const availableCategories = projectStore.hasProject ? projectStore.categories : CORE_CATEGORIES;
++        const targetIds = ids || availableCategories.filter(c => onboardingSelection[c.id]).map(c => c.id);
+         
+         if (targetIds.length === 0) {
+             console.warn("No categories selected for Strategy Run");
+@@ -181,16 +186,17 @@ const App: React.FC = () => {
+         }
+ 
+         for (const catId of targetIds) {
+-            const cat = CORE_CATEGORIES.find(c => c.id === catId);
++            const cat = availableCategories.find(c => c.id === catId);
+             if (!cat) continue;
+ 
+             const job = await startJob('BUILD_STRATEGY', cat.id);
+-            console.log(`[OK] CONSUMER_NEED Started. categoryId=${cat.id} month=India/en`);
++            const countryName = projectStore.hasProject ? projectStore.countryName : 'India';
++            console.log(`[OK] CONSUMER_NEED Started. categoryId=${cat.id} market=${countryName}`);
+ 
+             try {
+                 await JobRunner.runStep(job, 'Calling Model', async () => {
+                     const logFn = (l: AuditLogEntry) => JobRunner.updateJob(job, { logs: [...(job.logs||[]), l.message] });
+-                    const res = await runPreSweepIntelligence(cat, 'India', logFn, new AbortController().signal);
++                    const res = await runPreSweepIntelligence(cat, countryName as any, logFn, new AbortController().signal);
+                     
+                     if (res.ok) {
+                         const fetchable: FetchableData<PreSweepData> = {
+@@ -414,11 +420,11 @@ const App: React.FC = () => {
+                     )}
+                     {activeGear === 'STRATEGY' && (
+                         <StrategyView 
+-                            categories={[]} 
++                            categories={projectStore.hasProject ? projectStore.categories : []} 
+                             results={strategyResults} 
+                             onRun={runStrategy} 
+                             onRunDemand={runDemand} 
+-                            onboardingSelection={onboardingSelection} 
++                            onboardingSelection={projectStore.hasProject ? projectStore.selectionMap : onboardingSelection} 
+                             setOnboardingSelection={setOnboardingSelection} 
+                             onUpdateResult={()=>{}} 
+                         />
+@@ -456,4 +462,10 @@ const App: React.FC = () => {
+     );
+ };
+ 
++const App: React.FC = () => (
++    <ProjectProvider>
++        <AppInner />
++    </ProjectProvider>
++);
++
+ export default App;
+diff --git a/src/config/ProjectStore.tsx b/src/config/ProjectStore.tsx
+new file mode 100644
+index 0000000..7a6305a
+--- /dev/null
++++ b/src/config/ProjectStore.tsx
+@@ -0,0 +1,92 @@
++/**
++ * ProjectStore — React Context for Active Project
++ * 
++ * Central state that replaces CORE_CATEGORIES throughout the app.
++ * All downstream gears read from this instead of hardcoded constants.
++ */
++
++import React, { createContext, useContext, useState, useCallback } from 'react';
++import { ProjectDefinition, projectToCategories, createDefaultProject } from './projectContext';
++import { CategoryBaseline } from '../types';
++
++interface ProjectStoreState {
++    // The active project definition (from ScopeDefinitionV2)
++    project: ProjectDefinition | null;
++    
++    // Derived: CategoryBaseline[] compatible with all existing gears
++    categories: CategoryBaseline[];
++    
++    // Derived: Quick lookup for onboardingSelection compatibility
++    selectionMap: Record<string, boolean>;
++    
++    // Geo helpers (for DFS calls)
++    locationCode: number;
++    countryCode: string;
++    language: string;
++    countryName: string;
++    
++    // Actions
++    setProject: (project: ProjectDefinition) => void;
++    clearProject: () => void;
++    hasProject: boolean;
++}
++
++const defaultState: ProjectStoreState = {
++    project: null,
++    categories: [],
++    selectionMap: {},
++    locationCode: 2356,
++    countryCode: 'IN',
++    language: 'en',
++    countryName: 'India',
++    setProject: () => {},
++    clearProject: () => {},
++    hasProject: false,
++};
++
++const ProjectContext = createContext<ProjectStoreState>(defaultState);
++
++export const useProjectStore = () => useContext(ProjectContext);
++
++export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
++    const [project, setProjectState] = useState<ProjectDefinition | null>(null);
++    const [categories, setCategories] = useState<CategoryBaseline[]>([]);
++    const [selectionMap, setSelectionMap] = useState<Record<string, boolean>>({});
++
++    const setProject = useCallback((p: ProjectDefinition) => {
++        setProjectState(p);
++        const cats = projectToCategories(p);
++        setCategories(cats);
++        
++        const sel: Record<string, boolean> = {};
++        cats.forEach(c => { sel[c.id] = true; });
++        setSelectionMap(sel);
++        
++        console.log(`[ProjectStore] Project set: "${p.projectName}" | ${cats.length} categories | ${p.geo.countryName} (${p.geo.locationCode})`);
++    }, []);
++
++    const clearProject = useCallback(() => {
++        setProjectState(null);
++        setCategories([]);
++        setSelectionMap({});
++    }, []);
++
++    const value: ProjectStoreState = {
++        project,
++        categories,
++        selectionMap,
++        locationCode: project?.geo.locationCode ?? 2356,
++        countryCode: project?.geo.country ?? 'IN',
++        language: project?.geo.language ?? 'en',
++        countryName: project?.geo.countryName ?? 'India',
++        setProject,
++        clearProject,
++        hasProject: !!project && categories.length > 0,
++    };
++
++    return (
++        <ProjectContext.Provider value={value}>
++            {children}
++        </ProjectContext.Provider>
++    );
++};
+diff --git a/src/console/StrategyView.tsx b/src/console/StrategyView.tsx
+index 714d897..b198732 100644
+--- a/src/console/StrategyView.tsx
++++ b/src/console/StrategyView.tsx
+@@ -160,7 +160,7 @@ const SnapshotWidget: React.FC<{ category?: CategoryBaseline }> = ({ category })
+ };
+ 
+ export const StrategyView: React.FC<StrategyViewProps> = ({ 
+-    results, onRun, onRunDemand, onRunDeepDive, onRunPlaybook, onboardingSelection, setOnboardingSelection, onUpdateResult 
++    categories, results, onRun, onRunDemand, onRunDeepDive, onRunPlaybook, onboardingSelection, setOnboardingSelection, onUpdateResult 
+ }) => {
+     const [expandedCat, setExpandedCat] = useState<string | null>(null);
+     const [isGenerating, setIsGenerating] = useState(false);
+@@ -168,8 +168,11 @@ export const StrategyView: React.FC<StrategyViewProps> = ({
+     const [monthId, setMonthId] = useState(WindowingService.getCurrentMonthWindowId());
+     const [csvAvailability, setCsvAvailability] = useState<Record<string, boolean>>({});
+     
+-    const selectedCategories = CORE_CATEGORIES.filter(c => onboardingSelection[c.id]);
++    // Use project categories if provided, otherwise fall back to CORE_CATEGORIES
++    const availableCategories = categories.length > 0 ? categories : CORE_CATEGORIES;
++    const selectedCategories = availableCategories.filter(c => onboardingSelection[c.id]);
+     const activeCategory = selectedCategories.length > 0 ? selectedCategories[0] : undefined;
++    const isProjectMode = categories.length > 0;
+ 
+     // Load persisted output if available
+     useEffect(() => {
+@@ -190,14 +193,14 @@ export const StrategyView: React.FC<StrategyViewProps> = ({
+     useEffect(() => {
+         const checkAvailability = async () => {
+             const map: Record<string, boolean> = {};
+-            for (const cat of CORE_CATEGORIES) {
++            for (const cat of availableCategories) {
+                 const meta = await SeedStore.getSeedMeta(cat.id, monthId);
+                 map[cat.id] = meta?.status === 'PROCESSED';
+             }
+             setCsvAvailability(map);
+         };
+         checkAvailability();
+-    }, [monthId]);
++    }, [monthId, availableCategories]);
+ 
+     const toggleSelection = (catId: string) => {
+         setOnboardingSelection(prev => ({ ...prev, [catId]: !prev[catId] }));
+@@ -310,41 +313,74 @@ export const StrategyView: React.FC<StrategyViewProps> = ({
+ 
+                     <div className="w-full lg:w-80 shrink-0 bg-slate-50/50 rounded-2xl p-6 border border-slate-100">
+                         <div className="flex items-center justify-between mb-4">
+-                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Scope Selection</span>
++                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
++                                {isProjectMode ? 'Project Scope' : 'Scope Selection'}
++                            </span>
+                             <span className="bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full text-[10px] font-black">{selectedCategories.length}</span>
+                         </div>
+                         
+-                        <div className="flex flex-wrap gap-2 mb-6">
+-                            {CORE_CATEGORIES.map(cat => {
+-                                const isSelected = !!onboardingSelection[cat.id];
+-                                const hasCsv = csvAvailability[cat.id];
+-                                return (
+-                                    <button
+-                                        key={cat.id}
+-                                        onClick={() => toggleSelection(cat.id)}
+-                                        className={`
+-                                            group relative px-3 py-1.5 rounded-lg text-[10px] font-bold border transition-all flex items-center gap-1.5
+-                                            ${isSelected 
+-                                                ? 'bg-slate-800 text-white border-slate-800 shadow-md' 
+-                                                : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
+-                                            }
+-                                        `}
+-                                    >
+-                                        {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+-                                        {cat.category}
+-                                        <span className={`
+-                                            ml-1 px-1.5 py-0.5 rounded-[4px] text-[8px] tracking-tight uppercase font-black
+-                                            ${isSelected 
+-                                                ? (hasCsv ? 'bg-emerald-500/30 text-emerald-100' : 'bg-amber-500/30 text-amber-100')
+-                                                : (hasCsv ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400')
+-                                            }
+-                                        `}>
+-                                            {hasCsv ? 'CSV' : 'LLM'}
+-                                        </span>
+-                                    </button>
+-                                );
+-                            })}
+-                        </div>
++                        {isProjectMode ? (
++                            <div className="space-y-3 mb-6">
++                                {availableCategories.map(cat => (
++                                    <div key={cat.id} className="bg-white p-3 rounded-xl border-2 border-blue-200 shadow-sm">
++                                        <div className="flex items-center gap-2 mb-2">
++                                            <div className="w-5 h-5 bg-blue-600 rounded flex items-center justify-center">
++                                                <Check className="w-3 h-3 text-white stroke-[3]" />
++                                            </div>
++                                            <span className="font-bold text-sm text-slate-900">{cat.category}</span>
++                                        </div>
++                                        <p className="text-[10px] text-slate-500 leading-relaxed mb-2">{cat.consumerDescription}</p>
++                                        <div className="flex flex-wrap gap-1">
++                                            {cat.anchors.slice(0, 4).map((a, i) => (
++                                                <span key={i} className="px-1.5 py-0.5 bg-blue-50 text-blue-600 text-[8px] font-bold rounded">{a}</span>
++                                            ))}
++                                            {cat.anchors.length > 4 && (
++                                                <span className="px-1.5 py-0.5 bg-slate-100 text-slate-400 text-[8px] font-bold rounded">+{cat.anchors.length - 4}</span>
++                                            )}
++                                        </div>
++                                        <div className="mt-2 flex items-center gap-2 text-[9px] text-slate-400">
++                                            <span>{cat.defaultKeywords.length} keywords</span>
++                                            <span>·</span>
++                                            <span>{cat.keyBrands.length} brands</span>
++                                            <span>·</span>
++                                            <span className="text-emerald-500 font-bold">AI Generated</span>
++                                        </div>
++                                    </div>
++                                ))}
++                            </div>
++                        ) : (
++                            <div className="flex flex-wrap gap-2 mb-6">
++                                {CORE_CATEGORIES.map(cat => {
++                                    const isSelected = !!onboardingSelection[cat.id];
++                                    const hasCsv = csvAvailability[cat.id];
++                                    return (
++                                        <button
++                                            key={cat.id}
++                                            onClick={() => toggleSelection(cat.id)}
++                                            className={`
++                                                group relative px-3 py-1.5 rounded-lg text-[10px] font-bold border transition-all flex items-center gap-1.5
++                                                ${isSelected 
++                                                    ? 'bg-slate-800 text-white border-slate-800 shadow-md' 
++                                                    : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
++                                                }
++                                            `}
++                                        >
++                                            {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
++                                            {cat.category}
++                                            <span className={`
++                                                ml-1 px-1.5 py-0.5 rounded-[4px] text-[8px] tracking-tight uppercase font-black
++                                                ${isSelected 
++                                                    ? (hasCsv ? 'bg-emerald-500/30 text-emerald-100' : 'bg-amber-500/30 text-amber-100')
++                                                    : (hasCsv ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400')
++                                                }
++                                            `}>
++                                                {hasCsv ? 'CSV' : 'LLM'}
++                                            </span>
++                                        </button>
++                                    );
++                                })}
++                            </div>
++                        )}
+ 
+                         <button 
+                             onClick={handleRunStrategy}
+diff --git a/src/services/categoryGenerationService.ts b/src/services/categoryGenerationService.ts
+index 097e870..bda40ac 100644
+--- a/src/services/categoryGenerationService.ts
++++ b/src/services/categoryGenerationService.ts
+@@ -82,7 +82,7 @@ Generate STRICT JSON with this exact schema:
+             "anchors": ["<3-6 specific research anchors within this sub-category>"]
+         }
+     ],
+-    "defaultKeywords": ["<20-30 high-relevance consumer search keywords for this category in ${input.countryName}. Mix of branded, generic, problem-solution, and comparison queries. Must be terms real consumers would type into Google in ${input.language}.>"],
++    "defaultKeywords": ["<50-80 high-relevance consumer search keywords for this category in ${input.countryName}. Mix of branded, generic, problem-solution, comparison, and purchase-intent queries. Must be terms real consumers would type into Google in ${input.language}. Include long-tail queries (3-5 words) not just head terms.>"],
+     "keyBrands": ["<8-15 key brands competing in this category in ${input.countryName}. Include both market leaders and notable challengers/D2C brands.>"]
+ }
+ 
+@@ -116,8 +116,8 @@ Output ONLY the JSON. No markdown, no explanations.`;
+         if (parsed.anchors.length < 3) {
+             return { ok: false, error: "AI generated too few anchors (need at least 3).", rawResponse: raw.substring(0, 500) };
+         }
+-        if (parsed.defaultKeywords.length < 10) {
+-            return { ok: false, error: "AI generated too few keywords (need at least 10).", rawResponse: raw.substring(0, 500) };
++        if (parsed.defaultKeywords.length < 20) {
++            return { ok: false, error: "AI generated too few keywords (need at least 20).", rawResponse: raw.substring(0, 500) };
+         }
+ 
+         const category: AiGeneratedCategory = {
+-- 
+2.43.0
+
