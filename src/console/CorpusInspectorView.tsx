@@ -15,6 +15,8 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { FirestoreClient } from '../services/firestoreClient';
 import { SimpleErrorBoundary } from '../components/SimpleErrorBoundary';
 import { KeywordDiagnosticsService } from '../services/keywordDiagnosticsService';
+import { useProjectStore } from '../config/ProjectStore';
+import { PlatformDB } from '../services/platformDB';
 
 interface Props {
     categoryId: string;
@@ -241,6 +243,8 @@ const IntentBreakup: React.FC<{ rows: SnapshotKeywordRow[] }> = ({ rows }) => {
 };
 
 const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
+    const projectStore = useProjectStore();
+    const isProjectMode = projectStore.hasProject;
     const [rows, setRows] = useState<SnapshotKeywordRow[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -259,7 +263,46 @@ const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
     const [pageSize, setPageSize] = useState(500);
     const [currentPage, setCurrentPage] = useState(1);
 
+    // Project Corpus Build State
+    const [corpusBuildPhase, setCorpusBuildPhase] = useState<string>('IDLE');
+    const [corpusBuildMessage, setCorpusBuildMessage] = useState<string>('');
+    const isCorpusBuilding = corpusBuildPhase !== 'IDLE' && corpusBuildPhase !== 'DONE' && corpusBuildPhase !== 'FAILED';
+
     const log = (msg: string) => setLogs(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev].slice(0, 200));
+
+    // PROJECT MODE: Build corpus from DFS
+    const handleBuildProjectCorpus = async (force: boolean = false) => {
+        if (!isProjectMode || !projectStore.project) return;
+        setCorpusBuildPhase('STARTING');
+        setCorpusBuildMessage('Initializing...');
+        log('[CORPUS_BUILD] Starting DFS corpus build...');
+
+        try {
+            const { ProjectCorpusBuilder } = await import('../services/projectCorpusBuilder');
+            const result = await ProjectCorpusBuilder.buildCorpus(
+                projectStore.project,
+                { forceRebuild: force },
+                (progress) => {
+                    setCorpusBuildPhase(progress.phase);
+                    setCorpusBuildMessage(progress.message);
+                    log(`[CORPUS_BUILD][${progress.phase}] ${progress.message}`);
+                }
+            );
+
+            if (result.ok) {
+                log(`[CORPUS_BUILD][DONE] ${result.totalRows} rows (${result.validRows} valid, ${result.discoveredCount} discovered) in ${(result.elapsedMs / 1000).toFixed(1)}s`);
+                // Reload the data
+                await loadData();
+            } else {
+                log(`[CORPUS_BUILD][FAIL] ${result.error}`);
+                setError(result.error || 'Corpus build failed');
+            }
+        } catch (e: any) {
+            log(`[CORPUS_BUILD][EXCEPTION] ${e.message}`);
+            setCorpusBuildPhase('FAILED');
+            setCorpusBuildMessage(e.message);
+        }
+    };
 
     // MONACO WORKER PATCH (AI Studio Fix)
     useEffect(() => {
@@ -303,6 +346,22 @@ const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
         setLoading(true);
         setError(null);
         try {
+            // PROJECT MODE: Try PlatformDB (IndexedDB) first for dynamic categories
+            if (isProjectMode) {
+                log(`[CORPUS_INSPECTOR][PROJECT_MODE] Checking PlatformDB for ${categoryId}...`);
+                const platformCorpus = await PlatformDB.getCorpus(categoryId);
+                if (platformCorpus && platformCorpus.rows && platformCorpus.rows.length > 0) {
+                    setSnapshotId(`platformdb_${categoryId}`);
+                    setRows(platformCorpus.rows);
+                    setCurrentPage(1);
+                    log(`[CORPUS_INSPECTOR][PLATFORMDB_OK] Loaded ${platformCorpus.rows.length} rows from IndexedDB`);
+                    setLoading(false);
+                    return;
+                }
+                log(`[CORPUS_INSPECTOR][PLATFORMDB] No corpus in IndexedDB, falling back to Firestore...`);
+            }
+
+            // LEGACY MODE: Resolve from Firestore snapshot
             log(`[CORPUS_INSPECTOR] Resolving snapshot for ${categoryId}...`);
             const res = await SnapshotResolver.resolveActiveSnapshot(categoryId, 'IN', 'en');
             
@@ -570,6 +629,33 @@ const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
 
                 {/* ACTION BAR */}
                 <div className="flex flex-wrap gap-3">
+                    {/* PROJECT MODE: Build/Rebuild Corpus from DFS */}
+                    {isProjectMode && (
+                        <>
+                            <button 
+                                onClick={() => handleBuildProjectCorpus(false)}
+                                disabled={isCorpusBuilding || !!activeJobId}
+                                className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-black uppercase tracking-widest hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-1.5 shadow-sm"
+                            >
+                                {isCorpusBuilding 
+                                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin"/> Building...</>
+                                    : <><Database className="w-3.5 h-3.5"/> Build Corpus</>
+                                }
+                            </button>
+                            <button 
+                                onClick={() => handleBuildProjectCorpus(true)}
+                                disabled={isCorpusBuilding || !!activeJobId}
+                                className="px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg text-xs font-bold hover:bg-amber-100 disabled:opacity-50 flex items-center gap-1.5"
+                                title="Force rebuild: re-fetch all volumes from DFS"
+                            >
+                                <RefreshCw className="w-3.5 h-3.5"/> Rebuild
+                            </button>
+                            <div className="w-px h-6 bg-slate-200 mx-1"/>
+                        </>
+                    )}
+                    {isCorpusBuilding && (
+                        <span className="text-[10px] font-mono text-indigo-600 self-center animate-pulse">{corpusBuildMessage}</span>
+                    )}
                     <button 
                         onClick={handleFixHealth}
                         disabled={!!activeJobId}

@@ -1,0 +1,1016 @@
+diff --git a/src/App.tsx b/src/App.tsx
+index c4d27e6..daa06e8 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -74,6 +74,20 @@ const AppInner: React.FC = () => {
+             setScopeSelection(newScope);
+         }
+         setActiveGear('STRATEGY');
++
++        // Auto-trigger corpus build in background (non-blocking)
++        import('./services/projectCorpusBuilder').then(({ ProjectCorpusBuilder }) => {
++            console.log(`[App] Auto-triggering corpus build for project: ${project.projectName}`);
++            ProjectCorpusBuilder.buildCorpus(project, { forceRebuild: false }, (progress) => {
++                console.log(`[CorpusBuild] ${progress.phase}: ${progress.message}`);
++            }).then(result => {
++                if (result.ok) {
++                    console.log(`[App] Corpus built: ${result.totalRows} rows (${result.validRows} valid) in ${(result.elapsedMs / 1000).toFixed(1)}s`);
++                } else {
++                    console.warn(`[App] Corpus build failed: ${result.error}`);
++                }
++            });
++        });
+     };
+     
+     const [strategyResults, setStrategyResults] = useState<Record<string, FetchableData<PreSweepData>>>({});
+@@ -233,9 +247,12 @@ const AppInner: React.FC = () => {
+     };
+ 
+     const runDemand = async (ids: string[]): Promise<void> => {
+-        const cat = CORE_CATEGORIES.find(c => c.id === ids[0]);
++        const availableCategories = projectStore.hasProject ? projectStore.categories : CORE_CATEGORIES;
++        const cat = availableCategories.find(c => c.id === ids[0]);
+         if (!cat) return;
+         const month = WindowingService.getCurrentMonthWindowId();
++        const country = projectStore.hasProject ? projectStore.countryCode : 'IN';
++        const language = projectStore.hasProject ? projectStore.language : 'en';
+         
+         // 1. UI RESET: Clear previous state to prevent stale data display
+         setDemandResults(prev => ({
+@@ -251,8 +268,8 @@ const AppInner: React.FC = () => {
+                 const res = await DemandRunner.runDemand({
+                     categoryId: cat.id,
+                     month: month,
+-                    country: 'IN',
+-                    language: 'en',
++                    country: country,
++                    language: language,
+                     force: true, // User initiated means re-run
+                     jobId: job.jobId
+                 });
+@@ -437,7 +454,10 @@ const AppInner: React.FC = () => {
+                     )}
+                     {activeGear === 'DEMAND' && (
+                         <DemandSweepView 
+-                            categories={CORE_CATEGORIES.filter(c => onboardingSelection[c.id])} 
++                            categories={projectStore.hasProject 
++                                ? projectStore.categories 
++                                : CORE_CATEGORIES.filter(c => onboardingSelection[c.id])
++                            } 
+                             results={demandResults} 
+                             onRunDemand={runDemand} 
+                             onRunDeepDive={runDeepDive} 
+diff --git a/src/console/AuditView.tsx b/src/console/AuditView.tsx
+index ee50759..f8a9a88 100644
+--- a/src/console/AuditView.tsx
++++ b/src/console/AuditView.tsx
+@@ -1,5 +1,5 @@
+ 
+-import React, { useState } from 'react';
++import React, { useState, useEffect } from 'react';
+ import { 
+     ArrowLeft, ShieldCheck, Database, Layers, HeartPulse, 
+     BarChart3, Wrench, ShieldAlert, Wifi, BookOpen, Activity,
+@@ -32,6 +32,17 @@ export const AuditView: React.FC<{ onBack: () => void }> = ({ onBack }) => {
+     const [monthKey, setMonthKey] = useState(DateUtils.getCurrentMonthKey());
+     const [activeTab, setActiveTab] = useState('CONSOLE'); // Default to Console
+ 
++    // Sync categoryId when project categories change (fixes stale initial state)
++    useEffect(() => {
++        if (availableCategories.length > 0) {
++            const currentValid = availableCategories.some(c => c.id === categoryId);
++            if (!currentValid) {
++                setCategoryId(availableCategories[0].id);
++                console.log(`[AuditView] Category synced to project: ${availableCategories[0].id} (${availableCategories.length} available)`);
++            }
++        }
++    }, [availableCategories]);
++
+     const tabs = [
+         { id: 'CONSOLE', label: 'Console', icon: LayoutGrid, color: 'text-indigo-500' },
+         { id: 'HEALTH', label: 'System Health', icon: HeartPulse, color: 'text-emerald-500' },
+diff --git a/src/console/CorpusInspectorView.tsx b/src/console/CorpusInspectorView.tsx
+index 89e73b3..cd15977 100644
+--- a/src/console/CorpusInspectorView.tsx
++++ b/src/console/CorpusInspectorView.tsx
+@@ -15,6 +15,8 @@ import { doc, onSnapshot } from 'firebase/firestore';
+ import { FirestoreClient } from '../services/firestoreClient';
+ import { SimpleErrorBoundary } from '../components/SimpleErrorBoundary';
+ import { KeywordDiagnosticsService } from '../services/keywordDiagnosticsService';
++import { useProjectStore } from '../config/ProjectStore';
++import { PlatformDB } from '../services/platformDB';
+ 
+ interface Props {
+     categoryId: string;
+@@ -241,6 +243,8 @@ const IntentBreakup: React.FC<{ rows: SnapshotKeywordRow[] }> = ({ rows }) => {
+ };
+ 
+ const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
++    const projectStore = useProjectStore();
++    const isProjectMode = projectStore.hasProject;
+     const [rows, setRows] = useState<SnapshotKeywordRow[]>([]);
+     const [loading, setLoading] = useState(false);
+     const [error, setError] = useState<string | null>(null);
+@@ -259,8 +263,47 @@ const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
+     const [pageSize, setPageSize] = useState(500);
+     const [currentPage, setCurrentPage] = useState(1);
+ 
++    // Project Corpus Build State
++    const [corpusBuildPhase, setCorpusBuildPhase] = useState<string>('IDLE');
++    const [corpusBuildMessage, setCorpusBuildMessage] = useState<string>('');
++    const isCorpusBuilding = corpusBuildPhase !== 'IDLE' && corpusBuildPhase !== 'DONE' && corpusBuildPhase !== 'FAILED';
++
+     const log = (msg: string) => setLogs(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev].slice(0, 200));
+ 
++    // PROJECT MODE: Build corpus from DFS
++    const handleBuildProjectCorpus = async (force: boolean = false) => {
++        if (!isProjectMode || !projectStore.project) return;
++        setCorpusBuildPhase('STARTING');
++        setCorpusBuildMessage('Initializing...');
++        log('[CORPUS_BUILD] Starting DFS corpus build...');
++
++        try {
++            const { ProjectCorpusBuilder } = await import('../services/projectCorpusBuilder');
++            const result = await ProjectCorpusBuilder.buildCorpus(
++                projectStore.project,
++                { forceRebuild: force },
++                (progress) => {
++                    setCorpusBuildPhase(progress.phase);
++                    setCorpusBuildMessage(progress.message);
++                    log(`[CORPUS_BUILD][${progress.phase}] ${progress.message}`);
++                }
++            );
++
++            if (result.ok) {
++                log(`[CORPUS_BUILD][DONE] ${result.totalRows} rows (${result.validRows} valid, ${result.discoveredCount} discovered) in ${(result.elapsedMs / 1000).toFixed(1)}s`);
++                // Reload the data
++                await loadData();
++            } else {
++                log(`[CORPUS_BUILD][FAIL] ${result.error}`);
++                setError(result.error || 'Corpus build failed');
++            }
++        } catch (e: any) {
++            log(`[CORPUS_BUILD][EXCEPTION] ${e.message}`);
++            setCorpusBuildPhase('FAILED');
++            setCorpusBuildMessage(e.message);
++        }
++    };
++
+     // MONACO WORKER PATCH (AI Studio Fix)
+     useEffect(() => {
+         if (window.location.host.includes('aistudio') || window.location.host.includes('googleusercontent')) {
+@@ -303,6 +346,22 @@ const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
+         setLoading(true);
+         setError(null);
+         try {
++            // PROJECT MODE: Try PlatformDB (IndexedDB) first for dynamic categories
++            if (isProjectMode) {
++                log(`[CORPUS_INSPECTOR][PROJECT_MODE] Checking PlatformDB for ${categoryId}...`);
++                const platformCorpus = await PlatformDB.getCorpus(categoryId);
++                if (platformCorpus && platformCorpus.rows && platformCorpus.rows.length > 0) {
++                    setSnapshotId(`platformdb_${categoryId}`);
++                    setRows(platformCorpus.rows);
++                    setCurrentPage(1);
++                    log(`[CORPUS_INSPECTOR][PLATFORMDB_OK] Loaded ${platformCorpus.rows.length} rows from IndexedDB`);
++                    setLoading(false);
++                    return;
++                }
++                log(`[CORPUS_INSPECTOR][PLATFORMDB] No corpus in IndexedDB, falling back to Firestore...`);
++            }
++
++            // LEGACY MODE: Resolve from Firestore snapshot
+             log(`[CORPUS_INSPECTOR] Resolving snapshot for ${categoryId}...`);
+             const res = await SnapshotResolver.resolveActiveSnapshot(categoryId, 'IN', 'en');
+             
+@@ -570,6 +629,33 @@ const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
+ 
+                 {/* ACTION BAR */}
+                 <div className="flex flex-wrap gap-3">
++                    {/* PROJECT MODE: Build/Rebuild Corpus from DFS */}
++                    {isProjectMode && (
++                        <>
++                            <button 
++                                onClick={() => handleBuildProjectCorpus(false)}
++                                disabled={isCorpusBuilding || !!activeJobId}
++                                className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-black uppercase tracking-widest hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-1.5 shadow-sm"
++                            >
++                                {isCorpusBuilding 
++                                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin"/> Building...</>
++                                    : <><Database className="w-3.5 h-3.5"/> Build Corpus</>
++                                }
++                            </button>
++                            <button 
++                                onClick={() => handleBuildProjectCorpus(true)}
++                                disabled={isCorpusBuilding || !!activeJobId}
++                                className="px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg text-xs font-bold hover:bg-amber-100 disabled:opacity-50 flex items-center gap-1.5"
++                                title="Force rebuild: re-fetch all volumes from DFS"
++                            >
++                                <RefreshCw className="w-3.5 h-3.5"/> Rebuild
++                            </button>
++                            <div className="w-px h-6 bg-slate-200 mx-1"/>
++                        </>
++                    )}
++                    {isCorpusBuilding && (
++                        <span className="text-[10px] font-mono text-indigo-600 self-center animate-pulse">{corpusBuildMessage}</span>
++                    )}
+                     <button 
+                         onClick={handleFixHealth}
+                         disabled={!!activeJobId}
+--- /dev/null	2026-03-21 05:42:45.626097404 +0000
++++ b/src/services/projectCorpusBuilder.ts	2026-03-21 06:06:00.667950954 +0000
+@@ -0,0 +1,426 @@
++/**
++ * ProjectCorpusBuilder — Hydrates a project's keyword corpus with real DFS volumes
++ * 
++ * Flow:
++ * 1. Takes AI-generated category keywords from ProjectDefinition
++ * 2. Batches them into DFS search_volume/live calls
++ * 3. Optionally discovers related keywords via keywords_for_keywords/live
++ * 4. Converts results to SnapshotKeywordRow[] format
++ * 5. Saves to PlatformDB corpus store
++ * 
++ * This is the bridge between ScopeDefinitionV2 (AI generation) and CorpusInspector (real data).
++ */
++
++import { ProjectDefinition, AiGeneratedCategory } from '../config/projectContext';
++import { DataForSeoClient, DataForSeoRow } from './demand_vNext/dataforseoClient';
++import { CredsStore } from './demand_vNext/credsStore';
++import { PlatformDB } from './platformDB';
++import { SnapshotKeywordRow } from '../types';
++
++// --- CONFIG ---
++const DFS_BATCH_SIZE = 50;          // DFS accepts up to ~700 keywords per call, but 50 is safer for latency
++const DISCOVERY_SEED_COUNT = 10;    // Number of seed keywords for expansion
++const DISCOVERY_MAX_NEW = 100;      // Cap on discovered keywords to add
++const MIN_VOLUME_THRESHOLD = 0;     // Include zero-volume rows (mark them as ZERO status)
++
++export type CorpusBuildPhase = 'IDLE' | 'RESOLVING_CREDS' | 'FETCHING_SEED_VOLUMES' | 'DISCOVERING_KEYWORDS' | 'FETCHING_DISCOVERY_VOLUMES' | 'BUILDING_ROWS' | 'SAVING' | 'DONE' | 'FAILED';
++
++export interface CorpusBuildProgress {
++    phase: CorpusBuildPhase;
++    message: string;
++    totalKeywords: number;
++    processedKeywords: number;
++    validKeywords: number;
++    zeroKeywords: number;
++    errorKeywords: number;
++    discoveredKeywords: number;
++    elapsedMs: number;
++}
++
++export interface CorpusBuildResult {
++    ok: boolean;
++    categoryId: string;
++    totalRows: number;
++    validRows: number;
++    zeroRows: number;
++    discoveredCount: number;
++    elapsedMs: number;
++    error?: string;
++}
++
++type ProgressCallback = (progress: CorpusBuildProgress) => void;
++
++// --- HELPERS ---
++
++function slugifyKeywordId(keyword: string, categoryId: string): string {
++    const clean = keyword.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '_').substring(0, 60);
++    return `${categoryId}__${clean}`;
++}
++
++function assignAnchor(keyword: string, category: AiGeneratedCategory): string {
++    // Try to match keyword to a sub-category anchor
++    const kwLower = keyword.toLowerCase();
++    for (const sub of category.subCategories) {
++        for (const anchor of sub.anchors) {
++            if (kwLower.includes(anchor.toLowerCase().split(' ')[0])) {
++                return sub.name.toLowerCase().replace(/\s+/g, '_').substring(0, 30);
++            }
++        }
++        // Check sub-category name itself
++        if (kwLower.includes(sub.name.toLowerCase().split(' ')[0])) {
++            return sub.name.toLowerCase().replace(/\s+/g, '_').substring(0, 30);
++        }
++    }
++    // Fallback: use first strategic anchor
++    return category.anchors[0]?.toLowerCase().replace(/\s+/g, '_').substring(0, 30) || 'general';
++}
++
++function classifyIntent(keyword: string): string {
++    const kw = keyword.toLowerCase();
++    if (/\b(buy|price|cost|cheap|affordable|deal|offer|discount|coupon|shop|order|where to buy)\b/.test(kw)) return 'TRANSACTIONAL';
++    if (/\b(best|top|vs|versus|compare|comparison|review|rating|recommend)\b/.test(kw)) return 'COMMERCIAL';
++    if (/\b(how|what|why|when|guide|tutorial|tips|does|can|should|is it)\b/.test(kw)) return 'INFORMATIONAL';
++    return 'NAVIGATIONAL';
++}
++
++function dfsRowToSnapshotRow(
++    dfsRow: DataForSeoRow,
++    categoryId: string,
++    category: AiGeneratedCategory,
++    countryCode: string,
++    language: string,
++    source: 'SEED' | 'DISCOVERED'
++): SnapshotKeywordRow {
++    const volume = dfsRow.search_volume ?? null;
++    const isZero = volume === null || volume === 0;
++
++    return {
++        keyword_id: slugifyKeywordId(dfsRow.keyword, categoryId),
++        keyword_text: dfsRow.keyword,
++        volume: volume,
++        cpc: dfsRow.cpc ?? undefined,
++        competition: dfsRow.competition_index ?? dfsRow.competition ?? undefined,
++        anchor_id: assignAnchor(dfsRow.keyword, category),
++        intent_bucket: classifyIntent(dfsRow.keyword),
++        status: isZero ? 'ZERO' : 'VALID',
++        active: !isZero, // Zero-volume keywords are inactive by default
++        language_code: language,
++        country_code: countryCode,
++        category_id: categoryId,
++        created_at_iso: new Date().toISOString(),
++        validated_at_iso: new Date().toISOString(),
++        validation_tier: source === 'SEED' ? 'AI_GENERATED' : 'DFS_DISCOVERED',
++    };
++}
++
++// --- MAIN SERVICE ---
++
++export const ProjectCorpusBuilder = {
++
++    /**
++     * Build a full keyword corpus for a project.
++     * 
++     * @param project - The ProjectDefinition from ScopeDefinitionV2
++     * @param options - Configuration overrides
++     * @param onProgress - Callback for UI progress updates
++     * @returns CorpusBuildResult
++     */
++    async buildCorpus(
++        project: ProjectDefinition,
++        options: {
++            skipDiscovery?: boolean;     // Skip keyword expansion (faster, fewer API calls)
++            forceRebuild?: boolean;      // Ignore existing corpus
++            jobId?: string;
++        } = {},
++        onProgress?: ProgressCallback
++    ): Promise<CorpusBuildResult> {
++        const startTime = Date.now();
++        const gen = project.generatedCategory;
++
++        if (!gen) {
++            return { ok: false, categoryId: '', totalRows: 0, validRows: 0, zeroRows: 0, discoveredCount: 0, elapsedMs: 0, error: 'No generated category in project' };
++        }
++
++        const categoryId = gen.id;
++        const countryCode = project.geo.country;
++        const language = project.geo.language;
++        const locationCode = project.geo.locationCode;
++
++        const progress: CorpusBuildProgress = {
++            phase: 'IDLE',
++            message: 'Starting corpus build...',
++            totalKeywords: gen.defaultKeywords.length,
++            processedKeywords: 0,
++            validKeywords: 0,
++            zeroKeywords: 0,
++            errorKeywords: 0,
++            discoveredKeywords: 0,
++            elapsedMs: 0,
++        };
++
++        const emit = (phase: CorpusBuildPhase, message: string, updates?: Partial<CorpusBuildProgress>) => {
++            progress.phase = phase;
++            progress.message = message;
++            progress.elapsedMs = Date.now() - startTime;
++            if (updates) Object.assign(progress, updates);
++            onProgress?.({ ...progress });
++            console.log(`[CorpusBuilder][${phase}] ${message}`);
++        };
++
++        try {
++            // --- 1. CHECK EXISTING CORPUS ---
++            if (!options.forceRebuild) {
++                const existing = await PlatformDB.getCorpus(categoryId);
++                if (existing && existing.rowCount > 0) {
++                    emit('DONE', `Corpus already exists: ${existing.rowCount} rows. Use forceRebuild to overwrite.`);
++                    return { ok: true, categoryId, totalRows: existing.rowCount, validRows: 0, zeroRows: 0, discoveredCount: 0, elapsedMs: Date.now() - startTime };
++                }
++            }
++
++            // --- 2. RESOLVE DFS CREDENTIALS ---
++            emit('RESOLVING_CREDS', 'Resolving DataForSEO credentials...');
++            const creds = await CredsStore.get();
++            if (!creds || !creds.login || !creds.password) {
++                emit('FAILED', 'DataForSEO credentials not configured. Go to Settings → DFS Credentials.');
++                return { ok: false, categoryId, totalRows: 0, validRows: 0, zeroRows: 0, discoveredCount: 0, elapsedMs: Date.now() - startTime, error: 'DFS_CREDS_MISSING' };
++            }
++
++            const dfsAuth = { login: creds.login, password: creds.password };
++
++            // --- 3. FETCH VOLUMES FOR AI-GENERATED SEED KEYWORDS ---
++            emit('FETCHING_SEED_VOLUMES', `Fetching volumes for ${gen.defaultKeywords.length} seed keywords...`);
++
++            const allDfsRows: DataForSeoRow[] = [];
++            const seedKeywords = [...gen.defaultKeywords];
++
++            // Batch the keywords
++            for (let i = 0; i < seedKeywords.length; i += DFS_BATCH_SIZE) {
++                const batch = seedKeywords.slice(i, i + DFS_BATCH_SIZE);
++                const batchNum = Math.floor(i / DFS_BATCH_SIZE) + 1;
++                const totalBatches = Math.ceil(seedKeywords.length / DFS_BATCH_SIZE);
++
++                emit('FETCHING_SEED_VOLUMES', `Batch ${batchNum}/${totalBatches}: ${batch.length} keywords...`, {
++                    processedKeywords: i,
++                });
++
++                const result = await DataForSeoClient.fetchGoogleVolumes_DFS({
++                    keywords: batch,
++                    location: locationCode,
++                    language: language,
++                    creds: dfsAuth,
++                    categoryId,
++                    jobId: options.jobId,
++                });
++
++                if (result.ok && result.parsedRows) {
++                    allDfsRows.push(...result.parsedRows);
++                } else {
++                    console.warn(`[CorpusBuilder] Batch ${batchNum} failed: ${result.error}`);
++                    // Continue with remaining batches — partial data is better than none
++                    progress.errorKeywords += batch.length;
++                }
++
++                // Small delay between batches to respect rate limits
++                if (i + DFS_BATCH_SIZE < seedKeywords.length) {
++                    await new Promise(r => setTimeout(r, 300));
++                }
++            }
++
++            emit('FETCHING_SEED_VOLUMES', `Seed volumes fetched: ${allDfsRows.length} rows from ${seedKeywords.length} keywords`, {
++                processedKeywords: seedKeywords.length,
++            });
++
++            // --- 4. OPTIONAL: DISCOVER RELATED KEYWORDS ---
++            let discoveredRows: DataForSeoRow[] = [];
++
++            if (!options.skipDiscovery && allDfsRows.length > 0) {
++                emit('DISCOVERING_KEYWORDS', 'Discovering related keywords...');
++
++                // Pick top-volume seeds for expansion
++                const sortedSeeds = [...allDfsRows]
++                    .filter(r => (r.search_volume || 0) > 0)
++                    .sort((a, b) => (b.search_volume || 0) - (a.search_volume || 0))
++                    .slice(0, DISCOVERY_SEED_COUNT)
++                    .map(r => r.keyword);
++
++                if (sortedSeeds.length >= 3) {
++                    try {
++                        const discovered = await DataForSeoClient.discoverKeywordsWithVolume({
++                            keywords: sortedSeeds,
++                            location: locationCode,
++                            language: language,
++                            creds: dfsAuth,
++                            jobId: options.jobId,
++                        });
++
++                        // Deduplicate against existing seeds
++                        const existingKeywords = new Set(allDfsRows.map(r => r.keyword.toLowerCase()));
++                        discoveredRows = discovered
++                            .filter(r => !existingKeywords.has(r.keyword.toLowerCase()))
++                            .slice(0, DISCOVERY_MAX_NEW);
++
++                        emit('DISCOVERING_KEYWORDS', `Discovered ${discoveredRows.length} new keywords`, {
++                            discoveredKeywords: discoveredRows.length,
++                        });
++                    } catch (e: any) {
++                        console.warn(`[CorpusBuilder] Keyword discovery failed: ${e.message}`);
++                        // Non-fatal — continue with seed keywords only
++                    }
++                } else {
++                    emit('DISCOVERING_KEYWORDS', 'Skipping discovery: not enough high-volume seeds');
++                }
++            }
++
++            // --- 5. BUILD SNAPSHOT ROWS ---
++            emit('BUILDING_ROWS', 'Converting to corpus format...');
++
++            const snapshotRows: SnapshotKeywordRow[] = [];
++            const seenKeywords = new Set<string>();
++
++            // Process seed keywords
++            for (const dfsRow of allDfsRows) {
++                const key = dfsRow.keyword.toLowerCase();
++                if (seenKeywords.has(key)) continue;
++                seenKeywords.add(key);
++
++                const row = dfsRowToSnapshotRow(dfsRow, categoryId, gen, countryCode, language, 'SEED');
++                snapshotRows.push(row);
++
++                if (row.status === 'VALID') progress.validKeywords++;
++                else progress.zeroKeywords++;
++            }
++
++            // Process discovered keywords
++            for (const dfsRow of discoveredRows) {
++                const key = dfsRow.keyword.toLowerCase();
++                if (seenKeywords.has(key)) continue;
++                seenKeywords.add(key);
++
++                const row = dfsRowToSnapshotRow(dfsRow, categoryId, gen, countryCode, language, 'DISCOVERED');
++                snapshotRows.push(row);
++
++                if (row.status === 'VALID') progress.validKeywords++;
++                else progress.zeroKeywords++;
++            }
++
++            // Also add any seed keywords that didn't come back from DFS (mark as UNVERIFIED)
++            for (const kw of seedKeywords) {
++                const key = kw.toLowerCase();
++                if (seenKeywords.has(key)) continue;
++                seenKeywords.add(key);
++
++                snapshotRows.push({
++                    keyword_id: slugifyKeywordId(kw, categoryId),
++                    keyword_text: kw,
++                    volume: null,
++                    anchor_id: assignAnchor(kw, gen),
++                    intent_bucket: classifyIntent(kw),
++                    status: 'UNVERIFIED',
++                    active: false,
++                    language_code: language,
++                    country_code: countryCode,
++                    category_id: categoryId,
++                    created_at_iso: new Date().toISOString(),
++                    validation_tier: 'AI_GENERATED_NO_DFS',
++                });
++            }
++
++            emit('BUILDING_ROWS', `Built ${snapshotRows.length} corpus rows (${progress.validKeywords} valid, ${progress.zeroKeywords} zero)`, {
++                totalKeywords: snapshotRows.length,
++                processedKeywords: snapshotRows.length,
++            });
++
++            // --- 6. SAVE TO PLATFORMDB ---
++            emit('SAVING', `Saving ${snapshotRows.length} rows to IndexedDB...`);
++
++            const saved = await PlatformDB.saveCorpus(categoryId, snapshotRows);
++            if (!saved) {
++                emit('FAILED', 'Failed to save corpus to IndexedDB');
++                return { ok: false, categoryId, totalRows: snapshotRows.length, validRows: progress.validKeywords, zeroRows: progress.zeroKeywords, discoveredCount: discoveredRows.length, elapsedMs: Date.now() - startTime, error: 'SAVE_FAILED' };
++            }
++
++            // Also save the project + category to PlatformDB for persistence
++            await PlatformDB.saveProject(project);
++            await PlatformDB.saveCategory(categoryId, gen);
++
++            const elapsed = Date.now() - startTime;
++            emit('DONE', `Corpus built: ${snapshotRows.length} keywords (${progress.validKeywords} valid) in ${(elapsed / 1000).toFixed(1)}s`);
++
++            return {
++                ok: true,
++                categoryId,
++                totalRows: snapshotRows.length,
++                validRows: progress.validKeywords,
++                zeroRows: progress.zeroKeywords,
++                discoveredCount: discoveredRows.length,
++                elapsedMs: elapsed,
++            };
++
++        } catch (e: any) {
++            const elapsed = Date.now() - startTime;
++            emit('FAILED', `Corpus build failed: ${e.message}`);
++            return { ok: false, categoryId, totalRows: 0, validRows: 0, zeroRows: 0, discoveredCount: 0, elapsedMs: elapsed, error: e.message };
++        }
++    },
++
++    /**
++     * Quick build: seed volumes only, no discovery. Fast for testing.
++     */
++    async buildCorpusQuick(
++        project: ProjectDefinition,
++        onProgress?: ProgressCallback
++    ): Promise<CorpusBuildResult> {
++        return this.buildCorpus(project, { skipDiscovery: true, forceRebuild: true }, onProgress);
++    },
++
++    /**
++     * Check if a corpus already exists for a category.
++     */
++    async hasCorpus(categoryId: string): Promise<{ exists: boolean; rowCount: number }> {
++        const corpus = await PlatformDB.getCorpus(categoryId);
++        return { exists: !!(corpus && corpus.rowCount > 0), rowCount: corpus?.rowCount || 0 };
++    },
++
++    /**
++     * Get corpus rows for a category (for CorpusInspector compatibility).
++     */
++    async getCorpusRows(categoryId: string): Promise<SnapshotKeywordRow[]> {
++        const corpus = await PlatformDB.getCorpus(categoryId);
++        return corpus?.rows || [];
++    },
++
++    /**
++     * Get corpus stats for quick display.
++     */
++    async getCorpusStats(categoryId: string): Promise<{
++        total: number;
++        valid: number;
++        zero: number;
++        unverified: number;
++        byAnchor: Record<string, number>;
++        byIntent: Record<string, number>;
++        topKeywords: { keyword: string; volume: number }[];
++    }> {
++        const rows = await this.getCorpusRows(categoryId);
++        
++        const byAnchor: Record<string, number> = {};
++        const byIntent: Record<string, number> = {};
++        let valid = 0, zero = 0, unverified = 0;
++
++        for (const r of rows) {
++            byAnchor[r.anchor_id] = (byAnchor[r.anchor_id] || 0) + 1;
++            byIntent[r.intent_bucket] = (byIntent[r.intent_bucket] || 0) + 1;
++            if (r.status === 'VALID') valid++;
++            else if (r.status === 'ZERO') zero++;
++            else unverified++;
++        }
++
++        const topKeywords = rows
++            .filter(r => (r.volume || 0) > 0)
++            .sort((a, b) => (b.volume || 0) - (a.volume || 0))
++            .slice(0, 20)
++            .map(r => ({ keyword: r.keyword_text, volume: r.volume || 0 }));
++
++        return { total: rows.length, valid, zero, unverified, byAnchor, byIntent, topKeywords };
++    },
++};
+--- /dev/null	2026-03-21 05:42:45.626097404 +0000
++++ b/src/services/platformSignalHarvester.ts	2026-03-21 06:06:00.672950976 +0000
+@@ -0,0 +1,366 @@
++/**
++ * PlatformSignalHarvester — SERP Signal Collection for Dynamic Categories
++ * 
++ * Ported from blustream-signal-harvester-main with these changes:
++ * 1. Categories come from ProjectStore (dynamic) instead of hardcoded mensCareCategories
++ * 2. DFS calls go through the platform's proxy-aware DataForSeoClient
++ * 3. Results saved to PlatformDB instead of Firestore
++ * 4. Simplified: no Gemini enrichment in first pass (just raw SERP harvest)
++ * 
++ * Provider coverage: Google SERP, Reddit, YouTube, Amazon.in, Quora, Twitter
++ */
++
++import { CredsStore } from './demand_vNext/credsStore';
++import { PlatformDB } from './platformDB';
++import { CategoryBaseline } from '../types';
++
++// --- TYPES ---
++
++export type SignalPlatform = 'GOOGLE_SERP' | 'REDDIT' | 'QUORA' | 'AMAZON' | 'YOUTUBE' | 'TWITTER';
++
++export interface HarvestedSignal {
++    id: string;
++    url: string;
++    title: string;
++    snippet: string;
++    platform: SignalPlatform;
++    queryUsed: string;
++    categoryId: string;
++    categoryName: string;
++    collectedAt: string;
++    signalType: 'Content' | 'Conversation' | 'Transaction';
++    confidence: number;
++}
++
++export interface HarvestResult {
++    ok: boolean;
++    categoryId: string;
++    platform: SignalPlatform;
++    signals: HarvestedSignal[];
++    queriesUsed: number;
++    elapsedMs: number;
++    error?: string;
++}
++
++export interface FullHarvestResult {
++    ok: boolean;
++    categoryId: string;
++    totalSignals: number;
++    byPlatform: Record<string, number>;
++    elapsedMs: number;
++    errors: string[];
++}
++
++type ProgressCallback = (message: string) => void;
++
++// --- QUERY BUILDING ---
++
++function buildSerpQuery(platform: SignalPlatform, categoryLabel: string, anchors: string[]): string[] {
++    const anchorChunks: string[][] = [];
++    for (let i = 0; i < anchors.length; i += 4) {
++        anchorChunks.push(anchors.slice(i, i + 4));
++    }
++
++    const queries: string[] = [];
++
++    switch (platform) {
++        case 'GOOGLE_SERP':
++            queries.push(`${categoryLabel} reviews`);
++            for (const chunk of anchorChunks.slice(0, 2)) {
++                queries.push(`${categoryLabel} (${chunk.join(' OR ')})`);
++            }
++            break;
++        case 'REDDIT':
++            queries.push(`site:reddit.com "${categoryLabel}" review`);
++            if (anchorChunks[0]) {
++                queries.push(`site:reddit.com "${categoryLabel}" (${anchorChunks[0].join(' OR ')})`);
++            }
++            break;
++        case 'YOUTUBE':
++            queries.push(`site:youtube.com inurl:watch "${categoryLabel}" review`);
++            break;
++        case 'AMAZON':
++            queries.push(`site:amazon.in "${categoryLabel}"`);
++            break;
++        case 'QUORA':
++            queries.push(`site:quora.com "${categoryLabel}"`);
++            break;
++        case 'TWITTER':
++            queries.push(`site:twitter.com inurl:/status/ "${categoryLabel}" (review OR "worth it")`);
++            break;
++    }
++
++    return queries.slice(0, 4); // Max 4 queries per platform
++}
++
++function classifySignalType(url: string, platform: SignalPlatform): 'Content' | 'Conversation' | 'Transaction' {
++    if (platform === 'AMAZON') return 'Transaction';
++    if (['REDDIT', 'QUORA', 'TWITTER'].includes(platform)) return 'Conversation';
++    if (platform === 'YOUTUBE') return 'Content';
++    // Google SERP — heuristic
++    if (url.includes('amazon.') || url.includes('flipkart.') || url.includes('/buy')) return 'Transaction';
++    if (url.includes('reddit.') || url.includes('quora.')) return 'Conversation';
++    return 'Content';
++}
++
++function stableId(platform: string, url: string): string {
++    // Simple hash for deduplication
++    let hash = 0;
++    const str = `${platform}:${url}`;
++    for (let i = 0; i < str.length; i++) {
++        hash = ((hash << 5) - hash) + str.charCodeAt(i);
++        hash = hash & hash;
++    }
++    return `sig_${platform.toLowerCase()}_${Math.abs(hash).toString(36)}`;
++}
++
++function normalizeAnchors(rawAnchors: string[], limit: number = 8): string[] {
++    const terms = new Set<string>();
++    for (const raw of rawAnchors) {
++        const parts = raw.split(/[\/&(),]+/);
++        for (const part of parts) {
++            const clean = part.trim().toLowerCase();
++            if (clean.length >= 3) terms.add(clean);
++        }
++    }
++    return Array.from(terms).slice(0, limit);
++}
++
++// --- CORE DFS SERP CALL ---
++
++async function callDfsSerpLive(
++    query: string,
++    creds: { login: string; password: string },
++    locationCode: number,
++    language: string,
++    depth: number = 20
++): Promise<any[]> {
++    // Use platform's proxy-aware path
++    const config = await CredsStore.resolveDfsConfig();
++    const proxyUrl = config.proxyUrl;
++
++    const payload = [{
++        keyword: query,
++        location_code: locationCode,
++        language_code: language,
++        depth: depth,
++    }];
++
++    const path = 'serp/google/organic/live/advanced';
++
++    if (proxyUrl) {
++        // Proxy mode
++        const baseUrl = proxyUrl.replace(/\/$/, '');
++        const url = `${baseUrl}/dfs/proxy`;
++        const proxyPayload = { path, payload, creds, method: 'POST' };
++
++        const res = await fetch(url, {
++            method: 'POST',
++            headers: { 'Content-Type': 'application/json', 'X-API-Key': 'dev-key' },
++            body: JSON.stringify(proxyPayload),
++        });
++
++        if (!res.ok) throw new Error(`DFS Proxy ${res.status}`);
++        const wrapper = await res.json();
++        const data = wrapper.data || wrapper;
++        return data.tasks?.[0]?.result?.[0]?.items || [];
++    } else {
++        // Direct mode
++        const auth = btoa(`${creds.login}:${creds.password}`);
++        const res = await fetch(`https://api.dataforseo.com/v3/${path}`, {
++            method: 'POST',
++            headers: {
++                'Authorization': `Basic ${auth}`,
++                'Content-Type': 'application/json',
++            },
++            body: JSON.stringify(payload),
++        });
++
++        if (!res.ok) throw new Error(`DFS Direct ${res.status}`);
++        const data = await res.json();
++        return data.tasks?.[0]?.result?.[0]?.items || [];
++    }
++}
++
++// --- SINGLE PLATFORM HARVEST ---
++
++async function harvestPlatform(
++    platform: SignalPlatform,
++    category: CategoryBaseline,
++    creds: { login: string; password: string },
++    locationCode: number,
++    language: string,
++    onProgress?: ProgressCallback,
++): Promise<HarvestResult> {
++    const start = Date.now();
++    const anchors = normalizeAnchors(category.anchors || []);
++    const queries = buildSerpQuery(platform, category.category, anchors);
++    const signals = new Map<string, HarvestedSignal>(); // URL-keyed for dedupe
++    const TARGET = 30;
++
++    onProgress?.(`[${platform}] Running ${queries.length} queries...`);
++
++    for (const query of queries) {
++        if (signals.size >= TARGET) break;
++
++        try {
++            const items = await callDfsSerpLive(query, creds, locationCode, language);
++
++            for (const item of items) {
++                if (signals.size >= TARGET) break;
++                if (!item.url) continue;
++
++                // Platform-specific URL filter
++                if (platform === 'REDDIT' && !item.url.includes('reddit.com')) continue;
++                if (platform === 'YOUTUBE' && !item.url.includes('youtube.com') && !item.url.includes('youtu.be')) continue;
++                if (platform === 'AMAZON' && !item.url.includes('amazon.')) continue;
++                if (platform === 'QUORA' && !item.url.includes('quora.com')) continue;
++                if (platform === 'TWITTER' && !item.url.includes('twitter.com') && !item.url.includes('x.com')) continue;
++
++                const id = stableId(platform, item.url);
++                if (signals.has(item.url)) continue;
++
++                signals.set(item.url, {
++                    id,
++                    url: item.url,
++                    title: item.title || 'Untitled',
++                    snippet: item.description || '',
++                    platform,
++                    queryUsed: query,
++                    categoryId: category.id,
++                    categoryName: category.category,
++                    collectedAt: new Date().toISOString(),
++                    signalType: classifySignalType(item.url, platform),
++                    confidence: 0.5, // Default — enrichment would refine this
++                });
++            }
++        } catch (e: any) {
++            onProgress?.(`[${platform}] Query failed: ${e.message}`);
++        }
++
++        // Rate limit between queries
++        await new Promise(r => setTimeout(r, 500));
++    }
++
++    const result = Array.from(signals.values());
++    onProgress?.(`[${platform}] Done: ${result.length} signals`);
++
++    return {
++        ok: true,
++        categoryId: category.id,
++        platform,
++        signals: result,
++        queriesUsed: queries.length,
++        elapsedMs: Date.now() - start,
++    };
++}
++
++// --- PUBLIC API ---
++
++export const PlatformSignalHarvester = {
++
++    /**
++     * Harvest signals for a single platform + category.
++     */
++    async harvestSingle(
++        platform: SignalPlatform,
++        category: CategoryBaseline,
++        geo: { locationCode: number; language: string },
++        onProgress?: ProgressCallback,
++    ): Promise<HarvestResult> {
++        const creds = await CredsStore.get();
++        if (!creds) {
++            return { ok: false, categoryId: category.id, platform, signals: [], queriesUsed: 0, elapsedMs: 0, error: 'DFS_CREDS_MISSING' };
++        }
++
++        return harvestPlatform(platform, category, creds, geo.locationCode, geo.language, onProgress);
++    },
++
++    /**
++     * Harvest signals across all platforms for a category.
++     * This is the main entry point for the platform.
++     */
++    async harvestAll(
++        category: CategoryBaseline,
++        geo: { locationCode: number; language: string },
++        platforms: SignalPlatform[] = ['GOOGLE_SERP', 'REDDIT', 'YOUTUBE'],
++        onProgress?: ProgressCallback,
++    ): Promise<FullHarvestResult> {
++        const start = Date.now();
++        const creds = await CredsStore.get();
++        if (!creds) {
++            return { ok: false, categoryId: category.id, totalSignals: 0, byPlatform: {}, elapsedMs: 0, errors: ['DFS_CREDS_MISSING'] };
++        }
++
++        const allSignals: HarvestedSignal[] = [];
++        const byPlatform: Record<string, number> = {};
++        const errors: string[] = [];
++
++        for (const platform of platforms) {
++            onProgress?.(`Harvesting ${platform}...`);
++
++            try {
++                const result = await harvestPlatform(platform, category, creds, geo.locationCode, geo.language, onProgress);
++                allSignals.push(...result.signals);
++                byPlatform[platform] = result.signals.length;
++            } catch (e: any) {
++                errors.push(`${platform}: ${e.message}`);
++                byPlatform[platform] = 0;
++            }
++        }
++
++        // Save to PlatformDB
++        const storeKey = `signals_${category.id}`;
++        await PlatformDB.setCache(storeKey, {
++            categoryId: category.id,
++            signals: allSignals,
++            byPlatform,
++            harvestedAt: new Date().toISOString(),
++            totalSignals: allSignals.length,
++        });
++
++        onProgress?.(`Done: ${allSignals.length} signals across ${platforms.length} platforms`);
++
++        return {
++            ok: true,
++            categoryId: category.id,
++            totalSignals: allSignals.length,
++            byPlatform,
++            elapsedMs: Date.now() - start,
++            errors,
++        };
++    },
++
++    /**
++     * Get previously harvested signals from cache.
++     */
++    async getCachedSignals(categoryId: string): Promise<HarvestedSignal[]> {
++        const cached = await PlatformDB.getCache<any>(`signals_${categoryId}`);
++        return cached?.signals || [];
++    },
++
++    /**
++     * Get signal stats for display.
++     */
++    async getSignalStats(categoryId: string): Promise<{
++        total: number;
++        byPlatform: Record<string, number>;
++        byType: Record<string, number>;
++        harvestedAt: string | null;
++    }> {
++        const cached = await PlatformDB.getCache<any>(`signals_${categoryId}`);
++        if (!cached) return { total: 0, byPlatform: {}, byType: {}, harvestedAt: null };
++
++        const byType: Record<string, number> = {};
++        for (const sig of (cached.signals || [])) {
++            byType[sig.signalType] = (byType[sig.signalType] || 0) + 1;
++        }
++
++        return {
++            total: cached.totalSignals || 0,
++            byPlatform: cached.byPlatform || {},
++            byType,
++            harvestedAt: cached.harvestedAt || null,
++        };
++    },
++};

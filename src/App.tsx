@@ -74,6 +74,20 @@ const AppInner: React.FC = () => {
             setScopeSelection(newScope);
         }
         setActiveGear('STRATEGY');
+
+        // Auto-trigger corpus build in background (non-blocking)
+        import('./services/projectCorpusBuilder').then(({ ProjectCorpusBuilder }) => {
+            console.log(`[App] Auto-triggering corpus build for project: ${project.projectName}`);
+            ProjectCorpusBuilder.buildCorpus(project, { forceRebuild: false }, (progress) => {
+                console.log(`[CorpusBuild] ${progress.phase}: ${progress.message}`);
+            }).then(result => {
+                if (result.ok) {
+                    console.log(`[App] Corpus built: ${result.totalRows} rows (${result.validRows} valid) in ${(result.elapsedMs / 1000).toFixed(1)}s`);
+                } else {
+                    console.warn(`[App] Corpus build failed: ${result.error}`);
+                }
+            });
+        });
     };
     
     const [strategyResults, setStrategyResults] = useState<Record<string, FetchableData<PreSweepData>>>({});
@@ -233,9 +247,12 @@ const AppInner: React.FC = () => {
     };
 
     const runDemand = async (ids: string[]): Promise<void> => {
-        const cat = CORE_CATEGORIES.find(c => c.id === ids[0]);
+        const availableCategories = projectStore.hasProject ? projectStore.categories : CORE_CATEGORIES;
+        const cat = availableCategories.find(c => c.id === ids[0]);
         if (!cat) return;
         const month = WindowingService.getCurrentMonthWindowId();
+        const country = projectStore.hasProject ? projectStore.countryCode : 'IN';
+        const language = projectStore.hasProject ? projectStore.language : 'en';
         
         // 1. UI RESET: Clear previous state to prevent stale data display
         setDemandResults(prev => ({
@@ -251,8 +268,8 @@ const AppInner: React.FC = () => {
                 const res = await DemandRunner.runDemand({
                     categoryId: cat.id,
                     month: month,
-                    country: 'IN',
-                    language: 'en',
+                    country: country,
+                    language: language,
                     force: true, // User initiated means re-run
                     jobId: job.jobId
                 });
@@ -437,7 +454,10 @@ const AppInner: React.FC = () => {
                     )}
                     {activeGear === 'DEMAND' && (
                         <DemandSweepView 
-                            categories={CORE_CATEGORIES.filter(c => onboardingSelection[c.id])} 
+                            categories={projectStore.hasProject 
+                                ? projectStore.categories 
+                                : CORE_CATEGORIES.filter(c => onboardingSelection[c.id])
+                            } 
                             results={demandResults} 
                             onRunDemand={runDemand} 
                             onRunDeepDive={runDeepDive} 

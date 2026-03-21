@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
     ArrowLeft, ShieldCheck, Database, Layers, HeartPulse, 
     BarChart3, Wrench, ShieldAlert, Wifi, BookOpen, Activity,
@@ -31,6 +31,17 @@ export const AuditView: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     const [categoryId, setCategoryId] = useState(availableCategories[0]?.id || '');
     const [monthKey, setMonthKey] = useState(DateUtils.getCurrentMonthKey());
     const [activeTab, setActiveTab] = useState('CONSOLE'); // Default to Console
+
+    // Sync categoryId when project categories change (fixes stale initial state)
+    useEffect(() => {
+        if (availableCategories.length > 0) {
+            const currentValid = availableCategories.some(c => c.id === categoryId);
+            if (!currentValid) {
+                setCategoryId(availableCategories[0].id);
+                console.log(`[AuditView] Category synced to project: ${availableCategories[0].id} (${availableCategories.length} available)`);
+            }
+        }
+    }, [availableCategories]);
 
     const tabs = [
         { id: 'CONSOLE', label: 'Console', icon: LayoutGrid, color: 'text-indigo-500' },
