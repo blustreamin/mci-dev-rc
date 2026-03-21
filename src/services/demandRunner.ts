@@ -79,11 +79,12 @@ export const DemandRunner = {
             let allRows: any[] = [];
             let corpusSource = 'UNKNOWN';
             let corpusSnapshotId = `platformdb_${categoryId}`;
+            let totalRows = 0;
 
             const platformCorpus = await PlatformDB.getCorpus(categoryId);
             if (platformCorpus && platformCorpus.rows && platformCorpus.rows.length > 0) {
-                // PlatformDB has corpus (project mode)
                 allRows = platformCorpus.rows;
+                totalRows = allRows.length;
                 corpusSource = 'PLATFORMDB';
                 console.log(`[DEMAND_ENGINE][PLATFORMDB] Loaded ${allRows.length} rows from IndexedDB for ${categoryId}`);
             } else {
@@ -96,13 +97,14 @@ export const DemandRunner = {
                 
                 console.log(`[DEMAND_ENGINE][SNAP_RESOLVE] snapshotId=${corpusSnapshotId} lifecycle=${corpusRes.snapshot.lifecycle}`);
 
-                const { chunks, totalRows } = await loadSnapshotRowsLiteChunked(
+                const chunkedResult = await loadSnapshotRowsLiteChunked(
                     categoryId, 
                     corpusSnapshotId, 
                     { chunkSize: 1000, maxChunks: 50, seed: `DEMAND_${month}` },
                     { onlyValid: false } 
                 );
-                allRows = chunks.flat();
+                allRows = chunkedResult.chunks.flat();
+                totalRows = chunkedResult.totalRows;
                 corpusSource = 'FIRESTORE';
             }
             
