@@ -100,20 +100,33 @@ Return ONLY the product term:`,
     emitProgress(0, `Core product: "${coreProduct}"`, 0);
 
     // --- CALL 1: Structure + 150 seed keywords (MANDATORY GENERIC + BRAND SPECIFIC) ---
+    // Detect if language is non-Latin (Arabic, Hindi, Tamil, etc.)
+    const nonLatinLanguages = ['ar', 'hi', 'ta', 'te', 'bn', 'mr', 'gu', 'kn', 'ml', 'pa', 'ur', 'th', 'ko', 'ja', 'zh'];
+    const primaryLangCode = (input.language || 'en').split(',')[0].trim().toLowerCase();
+    const isNonLatin = nonLatinLanguages.some(l => primaryLangCode.startsWith(l));
+    
+    const bilingualInstruction = isNonLatin 
+        ? `\n\nCRITICAL LANGUAGE RULE: The target market uses ${input.language}, but Google Ads search volume data works BEST with English/Latin-script keywords. You MUST generate a MIX:
+- PART A (80 keywords): ALL in English (Latin script). Examples: "${coreProduct} price", "best ${coreProduct}", "buy ${coreProduct} online". These are the keywords that will have Google Ads search volume.
+- PART B (70 keywords): Mix of English (40) + ${input.language} script (30). For non-English keywords, also include the romanized/transliterated version. Example: if Arabic, include both "عصير برتقال" AND "aseer burtuqal".
+- Category name, anchors, consumerDescription, and keyBrands should be in English.
+- DO NOT generate all keywords in ${input.language} script — they will return ZERO search volume from Google Ads.`
+        : '';
+
     const prompt1 = `You are a search keyword researcher. Keywords will be validated against Google Ads search volume data.
 
 BRIEF: "${input.categoryText}"
 CORE PRODUCT: "${coreProduct}"
 Industry: ${input.industry}
 Country: ${input.countryName} (${input.countryCode})
-Language: ${input.language}
+Language: ${input.language}${bilingualInstruction}
 
 Generate JSON:
 {
-    "category": "<SHORT professional category name, 3-5 words max>",
+    "category": "<SHORT professional category name in English, 3-5 words max>",
     "consumerDescription": "<2-3 sentences about this category for consumers in ${input.countryName}>",
-    "anchors": ["<8-12 strategic research pillars>"],
-    "subCategories": [{"name": "<n>", "anchors": ["<4-6 specific anchors>"]}],
+    "anchors": ["<8-12 strategic research pillars in English>"],
+    "subCategories": [{"name": "<name in English>", "anchors": ["<4-6 specific anchors>"]}],
     "defaultKeywords": ["<EXACTLY 150 keywords — see SPLIT below>"],
     "keyBrands": ["<10-20 brands in ${input.countryName}>"]
 }
@@ -123,16 +136,18 @@ IMPORTANT: Generate 8-12 subCategories covering distinct research dimensions.
 CRITICAL KEYWORD SPLIT — your keywords will be checked against Google Ads. Zero-volume keywords are USELESS.
 
 PART A: MANDATORY GENERIC KEYWORDS (80 keywords) — These MUST have search volume:
+- ${isNonLatin ? 'ALL Part A keywords MUST be in English (Latin script) for Google Ads volume data.' : ''}
 - Head terms: "${coreProduct}", "${coreProduct} price", "${coreProduct} near me", "best ${coreProduct}", "buy ${coreProduct} online"
-- Brand queries: "[Brand] ${coreProduct}" for top 10 brands
-- Price: "${coreProduct} price per kg", "${coreProduct} 1kg price", "cheap ${coreProduct}", "${coreProduct} rate today"
-- Comparison: "${coreProduct} vs [alternative]", "best ${coreProduct} brand India"
-- How-to: "how to store ${coreProduct}", "how to make ${coreProduct}", "${coreProduct} recipes"
-- Purchase: "buy ${coreProduct} online", "${coreProduct} home delivery", "${coreProduct} on Amazon", "${coreProduct} BigBasket"
-- Health: "${coreProduct} nutrition", "${coreProduct} protein", "${coreProduct} calories", "is ${coreProduct} healthy"
+- Brand queries: "[Brand] ${coreProduct}" for top 10 brands in ${input.countryName}
+- Price: "${coreProduct} price", "cheap ${coreProduct}", "${coreProduct} cost", "${coreProduct} rate"
+- Comparison: "${coreProduct} vs [alternative]", "best ${coreProduct} brand ${input.countryName}"
+- How-to: "how to make ${coreProduct}", "${coreProduct} recipe", "homemade ${coreProduct}"
+- Purchase: "buy ${coreProduct} online", "${coreProduct} delivery", "${coreProduct} near me"
+- Health: "${coreProduct} benefits", "${coreProduct} nutrition", "is ${coreProduct} healthy"
 - These are GENERIC — do NOT include the brand name from the brief. Just "${coreProduct}" + modifiers.
 
 PART B: BRIEF-SPECIFIC KEYWORDS (70 keywords) — Niche terms from the brief:
+- ${isNonLatin ? '40 in English + 30 in ' + input.language + ' script (with romanized versions where applicable)' : 'Can include ' + input.language + ' terms where natural'}
 - Brand-specific: terms related to the specific brand/positioning described in the brief
 - Premium/artisanal variants, texture terms, SKU-related searches
 - Regional terms specific to the geography mentioned in the brief
@@ -172,7 +187,11 @@ Output ONLY JSON.`;
         emitProgress(1, `Structure ready: ${allKeywords.length} keywords, ${brands.length} brands`, allKeywords.length);
 
         // --- CALLS 2-6: Keyword expansion (100 each, 2.5s delay between) ---
-        const langContext = input.language.includes(',') ? `Generate keywords in ALL of these languages: ${input.language}. Include transliterated/romanized versions of non-English terms.` : `Generate keywords in ${input.language}.`;
+        const langContext = isNonLatin 
+            ? `CRITICAL: Generate 70%+ of keywords in English (Latin script). Google Ads has much better volume data for English keywords even in ${input.countryName}. Include up to 30% in ${input.language} script for local coverage.`
+            : input.language.includes(',') 
+                ? `Generate keywords in ALL of these languages: ${input.language}. Include transliterated/romanized versions of non-English terms.` 
+                : `Generate keywords in ${input.language}.`;
         
         const batches = [
             { focus: 'brand-specific and price queries', detail: `For each brand (${brands.slice(0, 8).join(', ')}): "[brand] ${coreProduct} price", "[brand] ${coreProduct} review", "[brand] vs [competitor]", "buy [brand] ${coreProduct} online". Also: "${coreProduct} price per kg", "cheap ${coreProduct}", "${coreProduct} rate today", "${coreProduct} wholesale price", "${coreProduct} 500g price", "${coreProduct} 1kg price".` },
