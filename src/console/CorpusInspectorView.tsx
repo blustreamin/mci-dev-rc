@@ -230,7 +230,8 @@ const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [search, setSearch] = useState('');
-    const [buildPhase, setBuildPhase] = useState('');
+    const [buildProgress, setBuildProgress] = useState<{ phase: string; message: string; total: number; processed: number; valid: number; zero: number; elapsed: number } | null>(null);
+    const [buildLog, setBuildLog] = useState<string[]>([]);
     const [building, setBuilding] = useState(false);
 
     // Corpus stats
@@ -298,22 +299,44 @@ const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
     const handleBuild = async (force: boolean) => {
         if (!isProjectMode || !projectStore.project) return;
         setBuilding(true);
-        setBuildPhase('Starting...');
+        setBuildProgress({ phase: 'STARTING', message: 'Initializing...', total: 0, processed: 0, valid: 0, zero: 0, elapsed: 0 });
+        setBuildLog(['Initializing corpus build pipeline...']);
         try {
             const { ProjectCorpusBuilder } = await import('../services/projectCorpusBuilder');
             const result = await ProjectCorpusBuilder.buildCorpus(
                 projectStore.project,
                 { forceRebuild: force },
-                (p) => setBuildPhase(`${p.phase}: ${p.message}`)
+                (p) => {
+                    setBuildProgress({
+                        phase: p.phase,
+                        message: p.message,
+                        total: p.totalKeywords,
+                        processed: p.processedKeywords,
+                        valid: p.validKeywords,
+                        zero: p.zeroKeywords,
+                        elapsed: p.elapsedMs,
+                    });
+                    setBuildLog(prev => {
+                        const line = `[${p.phase}] ${p.message}`;
+                        // Update last line if same phase, otherwise add new
+                        if (prev.length > 0 && prev[prev.length - 1].startsWith(`[${p.phase}]`)) {
+                            return [...prev.slice(0, -1), line];
+                        }
+                        return [...prev, line];
+                    });
+                }
             );
             if (result.ok) {
-                setBuildPhase(`Done: ${result.totalRows} keywords (${result.validRows} with volume)`);
+                setBuildLog(prev => [...prev, `[DONE] Corpus built: ${result.totalRows} keywords (${result.validRows} valid, ${result.zeroRows} zero) in ${(result.elapsedMs / 1000).toFixed(1)}s`]);
+                setBuildProgress(prev => prev ? { ...prev, phase: 'DONE', message: `${result.totalRows} keywords ready` } : null);
                 await loadData();
             } else {
-                setBuildPhase(`Failed: ${result.error}`);
+                setBuildLog(prev => [...prev, `[FAILED] ${result.error}`]);
+                setBuildProgress(prev => prev ? { ...prev, phase: 'FAILED', message: result.error || 'Unknown error' } : null);
             }
         } catch (e: any) {
-            setBuildPhase(`Error: ${e.message}`);
+            setBuildLog(prev => [...prev, `[ERROR] ${e.message}`]);
+            setBuildProgress(prev => prev ? { ...prev, phase: 'FAILED', message: e.message } : null);
         } finally {
             setBuilding(false);
         }
@@ -360,11 +383,74 @@ const CorpusInspectorView: React.FC<Props> = ({ categoryId }) => {
                     </div>
                 </div>
 
-                {/* Build Status */}
-                {building && (
-                    <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 flex items-center gap-3">
-                        <Loader2 className="w-5 h-5 animate-spin text-indigo-600" />
-                        <span className="text-xs font-bold text-indigo-700">{buildPhase}</span>
+                {/* Build Progress Panel */}
+                {buildProgress && (
+                    <div className="bg-slate-900 rounded-2xl overflow-hidden">
+                        {/* Progress Header */}
+                        <div className="px-5 pt-5 pb-3">
+                            <div className="flex items-center justify-between mb-3">
+                                <div className="flex items-center gap-2">
+                                    {building ? <Loader2 className="w-4 h-4 animate-spin text-indigo-400" /> : buildProgress.phase === 'DONE' ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <AlertTriangle className="w-4 h-4 text-red-400" />}
+                                    <span className="text-xs font-black uppercase tracking-wider text-white">
+                                        {building ? 'Building Corpus' : buildProgress.phase === 'DONE' ? 'Build Complete' : 'Build Failed'}
+                                    </span>
+                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 uppercase">{buildProgress.phase}</span>
+                                </div>
+                                <div className="flex items-center gap-4 text-[10px]">
+                                    <span className="text-slate-400">{(buildProgress.elapsed / 1000).toFixed(1)}s</span>
+                                    {buildProgress.valid > 0 && <span className="text-emerald-400 font-bold">{buildProgress.valid} valid</span>}
+                                    {buildProgress.zero > 0 && <span className="text-slate-500">{buildProgress.zero} zero</span>}
+                                </div>
+                            </div>
+                            
+                            {/* Progress Bar */}
+                            {building && buildProgress.total > 0 && (
+                                <div className="h-2 bg-slate-800 rounded-full overflow-hidden mb-2">
+                                    <div 
+                                        className="h-full bg-gradient-to-r from-indigo-500 to-emerald-500 rounded-full transition-all duration-500 ease-out"
+                                        style={{ width: `${Math.min(100, (buildProgress.processed / buildProgress.total) * 100)}%` }}
+                                    />
+                                </div>
+                            )}
+                            {building && buildProgress.total > 0 && (
+                                <div className="flex items-center justify-between text-[10px] text-slate-500">
+                                    <span>{buildProgress.processed} / {buildProgress.total} keywords processed</span>
+                                    <span>{buildProgress.total > 0 ? Math.round((buildProgress.processed / buildProgress.total) * 100) : 0}%</span>
+                                </div>
+                            )}
+
+                            {/* Live Stats */}
+                            {(buildProgress.valid > 0 || buildProgress.zero > 0) && (
+                                <div className="flex items-center gap-4 mt-3 pt-3 border-t border-slate-800">
+                                    <div className="flex items-center gap-1.5">
+                                        <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                                        <span className="text-[10px] text-slate-400">Valid: <span className="text-emerald-400 font-bold">{buildProgress.valid}</span></span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                        <div className="w-2 h-2 rounded-full bg-slate-600" />
+                                        <span className="text-[10px] text-slate-400">Zero: <span className="text-slate-500 font-bold">{buildProgress.zero}</span></span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                        <div className="w-2 h-2 rounded-full bg-indigo-500" />
+                                        <span className="text-[10px] text-slate-400">Total: <span className="text-indigo-400 font-bold">{buildProgress.processed}</span></span>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Telemetry Log */}
+                        {buildLog.length > 0 && (
+                            <div className="px-5 pb-4 font-mono text-[10px] max-h-32 overflow-y-auto border-t border-slate-800 pt-3">
+                                {buildLog.map((line, i) => (
+                                    <div key={i} className={`py-0.5 ${line.includes('[DONE]') ? 'text-emerald-400' : line.includes('[FAILED]') || line.includes('[ERROR]') ? 'text-red-400' : 'text-slate-500'}`}>
+                                        {line}
+                                    </div>
+                                ))}
+                                {building && (
+                                    <div className="py-0.5 text-indigo-400 animate-pulse">Processing...</div>
+                                )}
+                            </div>
+                        )}
                     </div>
                 )}
 
