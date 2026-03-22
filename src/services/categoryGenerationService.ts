@@ -20,8 +20,21 @@ function getApiKey(): string | undefined {
 
 function safeParseJSON(input: string): any {
     if (!input) return null;
+    // Strip markdown fences
     let cleaned = input.replace(/```json/gi, "").replace(/```/g, "").trim();
-    try { return JSON.parse(cleaned); } catch (e) { return null; }
+    // Try direct parse first
+    try { return JSON.parse(cleaned); } catch {}
+    // Try extracting first JSON object { ... }
+    const objMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (objMatch) {
+        try { return JSON.parse(objMatch[0]); } catch {}
+    }
+    // Try extracting first JSON array [ ... ]
+    const arrMatch = cleaned.match(/\[[\s\S]*\]/);
+    if (arrMatch) {
+        try { return JSON.parse(arrMatch[0]); } catch {}
+    }
+    return null;
 }
 
 function slugify(text: string): string {
@@ -150,17 +163,40 @@ RULES:
 Output ONLY JSON.`;
 
     try {
-        console.log(`[CategoryGen] Call 1/6: Structure + 150 keywords...`);
+        console.log(`[CategoryGen] Call 1/7: Structure + 150 keywords...`);
         emitProgress(0, 'Generating category structure + 150 seed keywords', 0);
-        const resp1 = await ai.models.generateContent({
-            model: MODEL,
-            contents: prompt1,
-            config: { maxOutputTokens: 8000, temperature: 0 },
-        });
+        
+        let parsed: any = null;
+        let lastRawResponse = '';
+        
+        // Try twice — first with JSON mime type, then without
+        for (let attempt = 1; attempt <= 2; attempt++) {
+            const resp1 = await ai.models.generateContent({
+                model: MODEL,
+                contents: prompt1,
+                config: { 
+                    maxOutputTokens: 8000, 
+                    temperature: 0,
+                    ...(attempt === 1 ? { responseMimeType: 'application/json' } : {}),
+                },
+            });
 
-        const parsed = safeParseJSON(resp1?.text || '');
+            lastRawResponse = resp1?.text || '';
+            console.log(`[CategoryGen] Call 1 attempt ${attempt}: response length=${lastRawResponse.length}`);
+            
+            parsed = safeParseJSON(lastRawResponse);
+            if (parsed?.category && parsed?.defaultKeywords) break;
+            
+            if (attempt === 1) {
+                console.warn(`[CategoryGen] Call 1 attempt 1 failed to parse, retrying without JSON mime...`);
+                emitProgress(0, 'Retrying structure generation...', 0);
+                await new Promise(r => setTimeout(r, 1000));
+            }
+        }
+
         if (!parsed?.category || !parsed?.defaultKeywords) {
-            return { ok: false, error: "AI returned invalid structure.", rawResponse: (resp1?.text || '').substring(0, 500) };
+            console.error(`[CategoryGen] Call 1 FAILED. Raw preview: ${lastRawResponse.substring(0, 300)}`);
+            return { ok: false, error: "AI returned invalid structure. Check console for raw response.", rawResponse: lastRawResponse.substring(0, 500) };
         }
         if ((parsed.anchors?.length || 0) < 3) {
             return { ok: false, error: "Too few anchors." };
