@@ -36,6 +36,21 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
     const [generatedCategory, setGeneratedCategory] = useState<AiGeneratedCategory | null>(null);
     const [genTelemetry, setGenTelemetry] = useState<string[]>([]);
     const [genProgress, setGenProgress] = useState<GenerationProgress | null>(null);
+
+    // 10-attribute structured input
+    const [attrs, setAttrs] = useState({
+        productDefinition: '',
+        productVariants: '',
+        positioning: '' as '' | 'Premium' | 'Mass' | 'Value' | 'Luxury' | 'Everyday',
+        coreDifferentiation: '',
+        emotionalHook: '',
+        targetAudience: '',
+        geoFocus: '',
+        consumptionContext: '',
+        proofPoints: '',
+        competitiveFrame: '',
+    });
+    const updateAttr = (key: keyof typeof attrs, val: string) => setAttrs(prev => ({ ...prev, [key]: val }));
     
     // Step 2 state
     const [countrySearch, setCountrySearch] = useState('');
@@ -44,8 +59,27 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
     const [selectedLanguages, setSelectedLanguages] = useState<Set<string>>(new Set(['en']));
 
     // --- STEP 1: AI Category Generation ---
+    const buildStructuredBrief = () => {
+        const parts = [];
+        if (attrs.productDefinition) parts.push(`Product: ${attrs.productDefinition}`);
+        if (attrs.productVariants) parts.push(`Variants/SKUs: ${attrs.productVariants}`);
+        if (attrs.positioning) parts.push(`Positioning: ${attrs.positioning}`);
+        if (attrs.coreDifferentiation) parts.push(`Differentiation: ${attrs.coreDifferentiation}`);
+        if (attrs.emotionalHook) parts.push(`Brand narrative: ${attrs.emotionalHook}`);
+        if (attrs.targetAudience) parts.push(`Target audience: ${attrs.targetAudience}`);
+        if (attrs.geoFocus) parts.push(`Geographic focus: ${attrs.geoFocus}`);
+        if (attrs.consumptionContext) parts.push(`Use cases: ${attrs.consumptionContext}`);
+        if (attrs.proofPoints) parts.push(`Proof points: ${attrs.proofPoints}`);
+        if (attrs.competitiveFrame) parts.push(`Competitive frame: ${attrs.competitiveFrame}`);
+        return parts.join('. ') + '.';
+    };
+
+    const canGenerate = !!(selectedIndustry && attrs.productDefinition.trim() && attrs.positioning);
+
     const handleGenerate = async () => {
-        if (!categoryText.trim() || !selectedIndustry) return;
+        if (!canGenerate) return;
+        const structuredBrief = buildStructuredBrief();
+        setCategoryText(structuredBrief);
         
         setIsGenerating(true);
         setGenerationError(null);
@@ -60,8 +94,8 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
         setGenTelemetry(prev => [...prev, `Market: ${selectedCountry.name} | Languages: ${langNames}`]);
 
         const result = await generateCategoryConfig({
-            categoryText: categoryText.trim(),
-            industry: selectedIndustry,
+            categoryText: structuredBrief,
+            industry: selectedIndustry!,
             countryName: selectedCountry.name,
             countryCode: selectedCountry.code,
             language: langNames,
@@ -82,7 +116,7 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
             setProject(prev => ({
                 ...prev,
                 industry: selectedIndustry,
-                categoryInput: categoryText.trim(),
+                categoryInput: structuredBrief,
                 generatedCategory: result.category!,
                 projectName: `${result.category!.category} — ${selectedCountry.name}`,
                 status: 'READY',
@@ -246,27 +280,90 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
                         </div>
                     </div>
 
-                    {/* Category Free Text */}
-                    <div>
-                        <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-3">
-                            What specific category do you want to research?
+                    {/* 10-Attribute Product Intelligence Form */}
+                    <div className="space-y-5">
+                        <label className="block text-xs font-black text-slate-500 uppercase tracking-widest">
+                            Product Intelligence Framework
                         </label>
-                        <div className="relative">
-                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                            <input
-                                type="text"
-                                value={categoryText}
-                                onChange={e => { setCategoryText(e.target.value); setGeneratedCategory(null); setGenerationError(null); }}
-                                onKeyDown={e => { if (e.key === 'Enter' && categoryText.trim() && selectedIndustry) handleGenerate(); }}
-                                placeholder="e.g. premium dog food, electric scooters, men's beard care, plant-based snacks..."
-                                className="w-full pl-12 pr-4 py-4 text-lg border-2 border-slate-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors bg-white placeholder:text-slate-300"
-                            />
+
+                        {/* Row 1: Product Definition + Variants */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">1. Product Definition <span className="text-red-400">*</span></label>
+                                <input type="text" value={attrs.productDefinition} onChange={e => updateAttr('productDefinition', e.target.value)} placeholder="e.g., Fresh malai paneer, Social media scheduling tool" className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm focus:border-blue-500 focus:outline-none bg-white placeholder:text-slate-300" />
+                                <p className="mt-1 text-[9px] text-slate-400">What exactly is the product?</p>
+                            </div>
+                            <div>
+                                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">2. Product Variants / SKUs</label>
+                                <input type="text" value={attrs.productVariants} onChange={e => updateAttr('productVariants', e.target.value)} placeholder="e.g., 200g, 500g, flavoured | Free plan, Pro, Enterprise" className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm focus:border-blue-500 focus:outline-none bg-white placeholder:text-slate-300" />
+                                <p className="mt-1 text-[9px] text-slate-400">Sizes, formats, tiers</p>
+                            </div>
                         </div>
-                        <p className="mt-2 text-xs text-slate-400">Be specific. Include the product type, positioning (premium/mass), or target consumer if relevant.</p>
+
+                        {/* Row 2: Positioning (forced choice) + Core Differentiation */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">3. Category Positioning <span className="text-red-400">*</span></label>
+                                <div className="flex flex-wrap gap-2">
+                                    {(['Premium', 'Mass', 'Value', 'Luxury', 'Everyday'] as const).map(pos => (
+                                        <button key={pos} onClick={() => updateAttr('positioning', pos)} className={`px-4 py-2.5 rounded-xl border-2 text-xs font-bold transition-all ${attrs.positioning === pos ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-sm' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'}`}>
+                                            {attrs.positioning === pos && <span className="mr-1">✓</span>}{pos}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">4. Core Differentiation</label>
+                                <input type="text" value={attrs.coreDifferentiation} onChange={e => updateAttr('coreDifferentiation', e.target.value)} placeholder="e.g., Velvet texture, AI-powered analytics, 10x faster" className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm focus:border-blue-500 focus:outline-none bg-white placeholder:text-slate-300" />
+                                <p className="mt-1 text-[9px] text-slate-400">What makes it objectively better?</p>
+                            </div>
+                        </div>
+
+                        {/* Row 3: Emotional Hook + Target Audience */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">5. Emotional / Narrative Hook</label>
+                                <input type="text" value={attrs.emotionalHook} onChange={e => updateAttr('emotionalHook', e.target.value)} placeholder="e.g., Artisanal, farm-to-table | Built for creators, not corporations" className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm focus:border-blue-500 focus:outline-none bg-white placeholder:text-slate-300" />
+                                <p className="mt-1 text-[9px] text-slate-400">The story or feeling that converts product to brand</p>
+                            </div>
+                            <div>
+                                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">6. Target Audience</label>
+                                <input type="text" value={attrs.targetAudience} onChange={e => updateAttr('targetAudience', e.target.value)} placeholder="e.g., Urban homemakers, foodies | Solo entrepreneurs, freelancers" className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm focus:border-blue-500 focus:outline-none bg-white placeholder:text-slate-300" />
+                                <p className="mt-1 text-[9px] text-slate-400">Primary + secondary buyer personas</p>
+                            </div>
+                        </div>
+
+                        {/* Row 4: Geographic Focus + Consumption Context */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">7. Geographic Focus</label>
+                                <input type="text" value={attrs.geoFocus} onChange={e => updateAttr('geoFocus', e.target.value)} placeholder="e.g., Chennai, South India | Tier 1 cities, pan-India" className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm focus:border-blue-500 focus:outline-none bg-white placeholder:text-slate-300" />
+                                <p className="mt-1 text-[9px] text-slate-400">Launch region or focus markets</p>
+                            </div>
+                            <div>
+                                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">8. Consumption Context / Use Cases</label>
+                                <input type="text" value={attrs.consumptionContext} onChange={e => updateAttr('consumptionContext', e.target.value)} placeholder="e.g., Daily cooking, premium dishes | Content scheduling, analytics" className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm focus:border-blue-500 focus:outline-none bg-white placeholder:text-slate-300" />
+                                <p className="mt-1 text-[9px] text-slate-400">When and how is the product used?</p>
+                            </div>
+                        </div>
+
+                        {/* Row 5: Proof Points + Competitive Frame */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">9. Proof Points / Credibility</label>
+                                <input type="text" value={attrs.proofPoints} onChange={e => updateAttr('proofPoints', e.target.value)} placeholder="e.g., B2B clients, exports, expert team | 10K users, YC-backed" className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm focus:border-blue-500 focus:outline-none bg-white placeholder:text-slate-300" />
+                                <p className="mt-1 text-[9px] text-slate-400">Why should anyone trust this brand?</p>
+                            </div>
+                            <div>
+                                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">10. Competitive Frame</label>
+                                <input type="text" value={attrs.competitiveFrame} onChange={e => updateAttr('competitiveFrame', e.target.value)} placeholder="e.g., Amul, Mother Dairy | Hootsuite, Buffer, Sprout Social" className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm focus:border-blue-500 focus:outline-none bg-white placeholder:text-slate-300" />
+                                <p className="mt-1 text-[9px] text-slate-400">Who are you competing against?</p>
+                            </div>
+                        </div>
                     </div>
 
                     {/* Geography — inline on Step 1 */}
-                    {selectedIndustry && categoryText.trim() && (
+                    {selectedIndustry && attrs.productDefinition.trim() && (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             {/* Country */}
                             <div>
@@ -332,7 +429,7 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
                     )}
 
                     {/* Generate Button */}
-                    {selectedIndustry && categoryText.trim() && !generatedCategory && (
+                    {canGenerate && !generatedCategory && (
                         <div>
                             <button
                                 onClick={handleGenerate}
