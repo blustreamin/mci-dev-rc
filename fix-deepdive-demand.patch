@@ -1,0 +1,55 @@
+diff --git a/src/services/projectDeepDiveService.ts b/src/services/projectDeepDiveService.ts
+index 13c627d..d919d20 100644
+--- a/src/services/projectDeepDiveService.ts
++++ b/src/services/projectDeepDiveService.ts
+@@ -74,11 +74,38 @@ export const ProjectDeepDiveService = {
+         const anchorSummary = Object.entries(anchorMap).sort((a, b) => b[1] - a[1]).map(([a, v]) => `${a}: ${v.toLocaleString()}`).join(', ');
+ 
+         emit('GATHERING', 'Loading demand metrics...', 25);
+-        const demandData = await PlatformDB.getDemand(categoryId);
++        let demandData: any = null;
+         let demandSummary = 'No demand data available';
+         let metrics = { demand_index_mn: 0, readiness: 0, spread: 0, trend: 0 };
++
++        // Try multiple sources for demand data
++        try {
++            // 1. Try PlatformDB demand output (month-keyed)
++            const now = new Date();
++            const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
++            demandData = await PlatformDB.getDemandOutput(categoryId, month);
++            
++            // 2. Try cache key
++            if (!demandData) {
++                demandData = await PlatformDB.getCache(`demand_${categoryId}`);
++            }
++
++            // 3. Try DemandOutputStore (Firestore) as fallback
++            if (!demandData) {
++                try {
++                    const { DemandOutputStore } = await import('./demandOutputStore');
++                    const fsDoc = await DemandOutputStore.readDemandDoc({ categoryId, month, country: project.geo.country, language: project.geo.language });
++                    if (fsDoc) demandData = fsDoc;
++                } catch (e) {
++                    console.warn('[DeepDive] Firestore demand fallback failed:', e);
++                }
++            }
++        } catch (e) {
++            console.warn('[DeepDive] Demand loading failed:', e);
++        }
++
+         if (demandData) {
+-            const m = demandData.metrics || demandData;
++            const m = demandData.metrics || demandData.payload?.metrics || demandData;
+             metrics = {
+                 demand_index_mn: m.demand_index_mn || m.demandIndexMn || 0,
+                 readiness: m.metric_scores?.readiness || m.readiness || 0,
+@@ -86,6 +113,9 @@ export const ProjectDeepDiveService = {
+                 trend: m.trend_5y?.value_percent || m.trend || 0,
+             };
+             demandSummary = `Demand: ${metrics.demand_index_mn.toFixed(2)} Mn searches, Readiness: ${metrics.readiness.toFixed(1)}/10, Spread: ${metrics.spread.toFixed(1)}/10, Trend: ${metrics.trend}%`;
++            emit('GATHERING', `Demand loaded: ${demandSummary}`, 30);
++        } else {
++            emit('GATHERING', 'No demand data found — generating with corpus data only', 30);
+         }
+ 
+         emit('GATHERING', 'Loading market signals...', 40);
