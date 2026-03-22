@@ -11,6 +11,7 @@ import { AuditView } from './console/AuditView';
 import { ImageLabView } from './console/ImageLabView';
 import { DeepDiveView } from './console/DeepDiveView';
 import { PlaybookView } from './console/PlaybookView';
+import { ProjectPlaybookView } from './console/ProjectPlaybookView';
 import { SignalsView } from './console/SignalsView';
 import { WorkflowGear, FetchableData, PreSweepData, SweepResult, DeepDiveResult, PlaybookResult, AuditLogEntry, JobState, TaskStage } from './types';
 import { CORE_CATEGORIES, INTERNAL_VERSION_TAG, INTERNAL_VERSION_STATUS } from './constants';
@@ -21,7 +22,7 @@ import { RunOrchestrator } from './services/runOrchestrator';
 import { PlumbingProbe } from './services/plumbingProbe';
 import { hardRefreshApp } from './services/hardRefresh';
 import { FORCE_CERTIFY_MODE, BUILD_STAMP } from './constants/runtimeFlags';
-import { Target, BarChart3, Microscope, RotateCcw, LayoutDashboard, ShieldCheck, Zap, Loader2, Sparkles, Play, List, AlertTriangle, Wifi } from 'lucide-react';
+import { Target, BarChart3, Microscope, RotateCcw, LayoutDashboard, ShieldCheck, Zap, Loader2, Sparkles, Play, List, AlertTriangle, Wifi, Rocket } from 'lucide-react';
 import { CategoryPipelineRunner } from './services/categoryPipelineRunner';
 import { SystemHealthCheck } from './services/systemHealthCheck';
 import { TaskPanel } from './components/TaskPanel';
@@ -420,6 +421,7 @@ const AppInner: React.FC = () => {
                                 { gear: 'DEMAND', icon: BarChart3, label: 'Demand' },
                                 { gear: 'SIGNALS', icon: Wifi, label: 'Signals' },
                                 { gear: 'DEEP_DIVE', icon: Microscope, label: 'Deep Dive' },
+                                { gear: 'PLAYBOOK', icon: Rocket, label: 'Playbook' },
                             ].map(({ gear, icon: Icon, label }) => (
                                 <button 
                                     key={gear} 
@@ -466,14 +468,7 @@ const AppInner: React.FC = () => {
                         <DeepDiveView />
                     )}
                     {activeGear === 'PLAYBOOK' && (
-                        <div className="max-w-7xl mx-auto px-4 pb-20">
-                            {Object.entries(playbookResults).map(([id, r]) => {
-                                const res = r as FetchableData<PlaybookResult>;
-                                return res.status === 'Success' && res.data && (
-                                    <PlaybookView key={id} data={res.data} status={res.status} />
-                                );
-                            })}
-                        </div>
+                        <ProjectPlaybookView />
                     )}
                     {activeGear === 'IMAGE_LAB' && (
                         <ImageLabView />
