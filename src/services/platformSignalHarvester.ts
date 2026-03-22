@@ -84,18 +84,9 @@ async function harvestWithGemini(
 
     const ai = new GoogleGenAI({ apiKey });
 
-    const prompt = `Search Google for: "${query}"
+    const prompt = `Search for: ${query}
 
-Return the top 10 most relevant search results as a JSON array. For each result, include:
-- url: the full URL
-- title: the page title
-- snippet: a 1-2 sentence description of the content
-
-OUTPUT FORMAT (strict JSON array):
-[{"url": "https://...", "title": "...", "snippet": "..."}]
-
-Only return real, existing URLs from the search results. Do NOT make up URLs.
-Output ONLY the JSON array, nothing else.`;
+Find and list the most relevant web pages, articles, videos, forum discussions, and product pages about this topic. For each result describe what the page is about in 1-2 sentences.`;
 
     try {
         const resp = await ai.models.generateContent({
@@ -106,35 +97,81 @@ Output ONLY the JSON array, nothing else.`;
             },
         });
 
-        const text = resp.text || '';
-        // Extract JSON from response (might have markdown wrapping)
-        const jsonMatch = text.match(/\[[\s\S]*\]/);
-        if (!jsonMatch) {
-            console.warn(`[SignalHarvester] No JSON array found in response for "${query}"`);
-            return [];
-        }
+        const signals: HarvestedSignal[] = [];
 
-        const parsed = JSON.parse(jsonMatch[0]);
-        if (!Array.isArray(parsed)) return [];
+        // Method 1: Extract from groundingMetadata (the real search results)
+        const candidate = (resp as any).candidates?.[0];
+        const groundingMeta = candidate?.groundingMetadata;
+        const chunks = groundingMeta?.groundingChunks || [];
+        const supportChunks = groundingMeta?.groundingSupports || [];
 
-        return parsed
-            .filter((r: any) => r.url && r.title)
-            .map((r: any) => {
-                const platform = classifyPlatform(r.url);
-                return {
-                    id: stableId(r.url),
-                    url: r.url,
-                    title: r.title,
-                    snippet: r.snippet || '',
+        if (chunks.length > 0) {
+            for (const chunk of chunks) {
+                const web = chunk.web;
+                if (!web?.uri) continue;
+                
+                const url = web.uri;
+                const title = web.title || 'Untitled';
+                
+                // Find a support text snippet for this chunk
+                let snippet = '';
+                for (const support of supportChunks) {
+                    const indices = support.groundingChunkIndices || [];
+                    if (indices.includes(chunks.indexOf(chunk))) {
+                        snippet = support.segment?.text || '';
+                        break;
+                    }
+                }
+
+                const platform = classifyPlatform(url);
+                signals.push({
+                    id: stableId(url),
+                    url,
+                    title,
+                    snippet: snippet || `Found via search: "${query}"`,
                     platform,
                     queryUsed: query,
                     categoryId,
                     categoryName,
                     collectedAt: new Date().toISOString(),
-                    signalType: classifyType(r.url, platform),
+                    signalType: classifyType(url, platform),
                     confidence: 0.7,
-                };
-            });
+                });
+            }
+            console.log(`[SignalHarvester] Grounding chunks: ${chunks.length} → ${signals.length} signals for "${query}"`);
+        }
+
+        // Method 2: If no grounding chunks, try to extract URLs from the text response
+        if (signals.length === 0) {
+            const text = resp.text || '';
+            const urlRegex = /https?:\/\/[^\s\)\"\'<>]+/g;
+            const urls = text.match(urlRegex) || [];
+            
+            for (const url of urls) {
+                const cleanUrl = url.replace(/[.,;:]+$/, ''); // Strip trailing punctuation
+                const platform = classifyPlatform(cleanUrl);
+                signals.push({
+                    id: stableId(cleanUrl),
+                    url: cleanUrl,
+                    title: `Signal from ${platform}`,
+                    snippet: `Found in search results for "${query}"`,
+                    platform,
+                    queryUsed: query,
+                    categoryId,
+                    categoryName,
+                    collectedAt: new Date().toISOString(),
+                    signalType: classifyType(cleanUrl, platform),
+                    confidence: 0.5,
+                });
+            }
+            if (urls.length > 0) {
+                console.log(`[SignalHarvester] URL extraction fallback: ${urls.length} URLs for "${query}"`);
+            } else {
+                console.log(`[SignalHarvester] No results for "${query}" — text length: ${text.length}, text preview: ${text.substring(0, 200)}`);
+            }
+        }
+
+        return signals;
 
     } catch (e: any) {
         console.warn(`[SignalHarvester] Gemini search failed for "${query}": ${e.message}`);
