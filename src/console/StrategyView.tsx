@@ -271,150 +271,55 @@ export const StrategyView: React.FC<StrategyViewProps> = ({
 
     return (
         <div className="max-w-7xl mx-auto px-4 pb-20">
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-8 animate-in fade-in slide-in-from-top-4">
-                <div className="flex flex-col lg:flex-row justify-between items-start gap-8 mb-8">
-                    <div className="flex-1">
-                        <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-2xl font-black text-slate-900 flex items-center gap-2">
-                                <Target className="w-8 h-8 text-indigo-600"/> 
-                                Consumer Need Analysis Configuration
-                            </h2>
-                            <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-200">
-                                <Calendar className="w-4 h-4 text-slate-400"/>
-                                <span className="text-[10px] font-bold text-slate-500 uppercase">Target Month:</span>
-                                <input 
-                                    type="month" 
-                                    value={monthId} 
-                                    onChange={(e) => setMonthId(e.target.value)}
-                                    className="bg-transparent border-none text-xs font-bold text-slate-900 focus:ring-0 p-0 cursor-pointer"
-                                />
-                            </div>
+            {/* Header */}
+            <div className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4 pt-2">
+                <div>
+                    <h1 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-3">
+                        <Target className="w-6 h-6 text-indigo-600"/> Consumer Need Intelligence
+                    </h1>
+                    <p className="text-sm text-slate-500 mt-1">
+                        {isProjectMode 
+                            ? `${selectedCategories.length} ${selectedCategories.length === 1 ? 'category' : 'categories'} · AI-powered consumer need extraction`
+                            : 'Select categories to analyze consumer needs'
+                        }
+                    </p>
+                </div>
+                <div className="flex items-center gap-3">
+                    {isProjectMode && (
+                        <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200">
+                            <Calendar className="w-3.5 h-3.5 text-slate-400"/>
+                            <input 
+                                type="month" 
+                                value={monthId} 
+                                onChange={(e) => setMonthId(e.target.value)}
+                                className="bg-transparent border-none text-xs font-bold text-slate-900 focus:ring-0 p-0 cursor-pointer"
+                            />
                         </div>
-                        
-                        <p className="text-slate-500 text-sm max-w-2xl leading-relaxed">
-                            Establish the consumer need foundation for demand analysis. The system will deconstruct selected categories into canonical consumer intent anchors using Gemini 3 Pro reasoning.
-                        </p>
-
-                        <div className="grid grid-cols-1 gap-4 mt-6">
-                            <div className="bg-slate-50 p-4 rounded-lg border border-slate-100">
-                                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                                    <ClipboardCheck className="w-3.5 h-3.5 text-indigo-500"/> Analysis Pipeline
-                                </h4>
-                                <ul className="space-y-2">
-                                    {[
-                                        `${isProjectMode ? 'AI-generated' : 'Curated'} keyword corpus → Consumer need extraction`,
-                                        'Gemini 3 Pro reasoning for intent classification',
-                                        '7 analysis dimensions: Problems, Aspirations, Routines, Triggers, Barriers, Trends, Gaps',
-                                        'Consumer voice synthesis grounded in project geography',
-                                        'Scored insights (1-5) with evidence keywords'
-                                    ].map((item, i) => (
-                                        <li key={i} className="text-xs text-slate-600 flex items-center gap-2">
-                                            <div className="w-1 h-1 rounded-full bg-indigo-400" /> {item}
-                                        </li>
-                                    ))}
-                                </ul>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="w-full lg:w-80 shrink-0 bg-slate-50/50 rounded-2xl p-6 border border-slate-100">
-                        <div className="flex items-center justify-between mb-4">
-                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                                {isProjectMode ? 'Project Scope' : 'Scope Selection'}
-                            </span>
-                            <span className="bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full text-[10px] font-black">{selectedCategories.length}</span>
-                        </div>
-                        
-                        {isProjectMode ? (
-                            <div className="space-y-3 mb-6">
-                                {availableCategories.map(cat => (
-                                    <div key={cat.id} className="bg-white p-3 rounded-xl border-2 border-blue-200 shadow-sm">
-                                        <div className="flex items-center gap-2 mb-2">
-                                            <div className="w-5 h-5 bg-blue-600 rounded flex items-center justify-center">
-                                                <Check className="w-3 h-3 text-white stroke-[3]" />
-                                            </div>
-                                            <span className="font-bold text-sm text-slate-900">{cat.category}</span>
-                                        </div>
-                                        <p className="text-[10px] text-slate-500 leading-relaxed mb-2">{cat.consumerDescription}</p>
-                                        <div className="flex flex-wrap gap-1">
-                                            {cat.anchors.slice(0, 4).map((a, i) => (
-                                                <span key={i} className="px-1.5 py-0.5 bg-blue-50 text-blue-600 text-[8px] font-bold rounded">{a}</span>
-                                            ))}
-                                            {cat.anchors.length > 4 && (
-                                                <span className="px-1.5 py-0.5 bg-slate-100 text-slate-400 text-[8px] font-bold rounded">+{cat.anchors.length - 4}</span>
-                                            )}
-                                        </div>
-                                        <div className="mt-2 flex items-center gap-2 text-[9px] text-slate-400">
-                                            <span>{cat.defaultKeywords.length} keywords</span>
-                                            <span>·</span>
-                                            <span>{cat.keyBrands.length} brands</span>
-                                            <span>·</span>
-                                            <span className="text-emerald-500 font-bold">AI Generated</span>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        ) : (
-                            <div className="flex flex-wrap gap-2 mb-6">
-                                {CORE_CATEGORIES.map(cat => {
-                                    const isSelected = !!onboardingSelection[cat.id];
-                                    const hasCsv = csvAvailability[cat.id];
-                                    return (
-                                        <button
-                                            key={cat.id}
-                                            onClick={() => toggleSelection(cat.id)}
-                                            className={`
-                                                group relative px-3 py-1.5 rounded-lg text-[10px] font-bold border transition-all flex items-center gap-1.5
-                                                ${isSelected 
-                                                    ? 'bg-slate-800 text-white border-slate-800 shadow-md' 
-                                                    : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
-                                                }
-                                            `}
-                                        >
-                                            {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
-                                            {cat.category}
-                                            <span className={`
-                                                ml-1 px-1.5 py-0.5 rounded-[4px] text-[8px] tracking-tight uppercase font-black
-                                                ${isSelected 
-                                                    ? (hasCsv ? 'bg-emerald-500/30 text-emerald-100' : 'bg-amber-500/30 text-amber-100')
-                                                    : (hasCsv ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400')
-                                                }
-                                            `}>
-                                                {hasCsv ? 'CSV' : 'LLM'}
-                                            </span>
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        )}
-
-                        <button 
-                            onClick={handleRunStrategy}
-                            disabled={selectedCategories.length === 0 || isGenerating}
-                            className="w-full py-4 rounded-xl font-black text-sm shadow-lg flex items-center justify-center gap-2 transition-all uppercase tracking-widest bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            {isGenerating ? <Loader2 className="w-4 h-4 animate-spin"/> : <Play className="w-4 h-4 fill-current"/>}
-                            {isGenerating ? (genStatus || 'Generating...') : 'Generate Consumer Need Analysis'}
-                        </button>
-                        
-                        {genStatus && isGenerating && (
-                            <div className="mt-3 text-center text-[10px] font-bold text-indigo-600 animate-pulse">
-                                {genStatus}
-                            </div>
-                        )}
-                        
-                        <div className="mt-3 text-center text-[10px] text-slate-400 flex items-center justify-center gap-1.5 font-bold uppercase tracking-tighter">
-                            <ShieldCheck className="w-3 h-3"/> Enterprise Privacy Enforced
-                        </div>
-                    </div>
+                    )}
+                    <button 
+                        onClick={handleRunStrategy}
+                        disabled={selectedCategories.length === 0 || isGenerating}
+                        className="flex items-center gap-2 px-5 py-3 bg-indigo-600 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50 shadow-sm transition-all"
+                    >
+                        {isGenerating ? <Loader2 className="w-4 h-4 animate-spin"/> : <Play className="w-4 h-4 fill-current"/>}
+                        {isGenerating ? (genStatus || 'Generating...') : 'Generate Consumer Need Analysis'}
+                    </button>
                 </div>
             </div>
 
-            <div className="space-y-8">
+            {genStatus && isGenerating && (
+                <div className="bg-slate-900 rounded-2xl px-5 py-4 mb-6 flex items-center gap-3">
+                    <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+                    <span className="text-xs font-bold text-white">{genStatus}</span>
+                </div>
+            )}
+
+            <div className="space-y-6">
                 {selectedCategories.length === 0 && (
-                    <div className="text-center py-20 text-slate-300 bg-slate-50 rounded-3xl border-4 border-dashed border-slate-200">
-                        <Target className="w-16 h-16 mx-auto mb-4 opacity-20"/>
-                        <p className="text-xl font-medium tracking-tight">No categories selected for generation.</p>
+                    <div className="text-center py-20 text-slate-300 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+                        <Target className="w-12 h-12 mx-auto mb-4 opacity-20"/>
+                        <p className="text-lg font-bold text-slate-400">No categories selected for generation.</p>
+                        <p className="text-sm text-slate-400 mt-1">Create a project to get started.</p>
                     </div>
                 )}
 
