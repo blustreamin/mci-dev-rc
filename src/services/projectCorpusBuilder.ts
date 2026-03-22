@@ -238,26 +238,59 @@ export const ProjectCorpusBuilder = {
                     processedKeywords: i,
                 });
 
-                const result = await DataForSeoClient.fetchGoogleVolumes_DFS({
-                    keywords: batch,
-                    location: locationCode,
-                    language: language,
-                    creds: dfsAuth,
-                    categoryId,
-                    jobId: options.jobId,
-                });
-
-                if (result.ok && result.parsedRows) {
-                    allDfsRows.push(...result.parsedRows);
-                } else {
-                    console.warn(`[CorpusBuilder] Batch ${batchNum} failed: ${result.error}`);
-                    // Continue with remaining batches — partial data is better than none
-                    progress.errorKeywords += batch.length;
+                // Retry with exponential backoff (max 3 attempts)
+                let result: any = null;
+                for (let attempt = 1; attempt <= 3; attempt++) {
+                    try {
+                        result = await DataForSeoClient.fetchGoogleVolumes_DFS({
+                            keywords: batch,
+                            location: locationCode,
+                            language: language,
+                            creds: dfsAuth,
+                            categoryId,
+                            jobId: options.jobId,
+                        });
+                        if (result.ok) break; // Success
+                        
+                        // DFS returned error — retry with backoff
+                        if (attempt < 3) {
+                            const backoff = attempt * 2000;
+                            emit('FETCHING_SEED_VOLUMES', `Batch ${batchNum}/${totalBatches}: Retry ${attempt}/3 (waiting ${backoff/1000}s)...`, { processedKeywords: i });
+                            await new Promise(r => setTimeout(r, backoff));
+                        }
+                    } catch (e: any) {
+                        if (attempt < 3) {
+                            const backoff = attempt * 2000;
+                            emit('FETCHING_SEED_VOLUMES', `Batch ${batchNum}/${totalBatches}: Network error, retry ${attempt}/3...`, { processedKeywords: i });
+                            await new Promise(r => setTimeout(r, backoff));
+                        } else {
+                            result = { ok: false, error: e.message };
+                        }
+                    }
                 }
 
-                // Small delay between batches to respect rate limits
+                if (result?.ok && result.parsedRows) {
+                    allDfsRows.push(...result.parsedRows);
+                    const validInBatch = result.parsedRows.filter((r: any) => (r.search_volume || 0) > 0).length;
+                    progress.validKeywords += validInBatch;
+                    progress.zeroKeywords += result.parsedRows.length - validInBatch;
+                    emit('FETCHING_SEED_VOLUMES', `Batch ${batchNum}/${totalBatches} done: +${result.parsedRows.length} rows (${validInBatch} valid)`, {
+                        processedKeywords: i + batch.length,
+                        validKeywords: progress.validKeywords,
+                        zeroKeywords: progress.zeroKeywords,
+                    });
+                } else {
+                    console.warn(`[CorpusBuilder] Batch ${batchNum} failed after retries: ${result?.error}`);
+                    progress.errorKeywords += batch.length;
+                    emit('FETCHING_SEED_VOLUMES', `Batch ${batchNum}/${totalBatches} failed: ${result?.error || 'Unknown'}`, {
+                        processedKeywords: i + batch.length,
+                    });
+                }
+
+                // Progressive delay: 1.5s base, increases slightly each batch to avoid rate limits
                 if (i + DFS_BATCH_SIZE < seedKeywords.length) {
-                    await new Promise(r => setTimeout(r, 300));
+                    const delay = 1500 + (batchNum * 200); // 1.7s, 1.9s, 2.1s, etc.
+                    await new Promise(r => setTimeout(r, delay));
                 }
             }
 
