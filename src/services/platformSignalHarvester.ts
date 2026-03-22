@@ -55,42 +55,76 @@ type ProgressCallback = (message: string) => void;
 
 // --- QUERY BUILDING ---
 
-function buildSerpQuery(platform: SignalPlatform, categoryLabel: string, anchors: string[]): string[] {
-    const anchorChunks: string[][] = [];
-    for (let i = 0; i < anchors.length; i += 4) {
-        anchorChunks.push(anchors.slice(i, i + 4));
+function extractCoreTerms(categoryLabel: string): string[] {
+    // Extract 2-3 word core terms from long category names
+    // "Premium Fresh Malai Paneer & Artisanal Dairy" → ["malai paneer", "fresh paneer", "artisanal paneer"]
+    const stopwords = new Set(['premium', 'fresh', 'artisanal', 'the', 'and', 'for', 'with', 'from', 'best', 'top', 'quality', 'organic', 'natural', 'pure']);
+    const words = categoryLabel.toLowerCase().replace(/[&]/g, ' ').split(/\s+/).filter(w => w.length > 2);
+    const meaningful = words.filter(w => !stopwords.has(w));
+    
+    // Find the core product term (longest meaningful word or last noun-like word)
+    const core = meaningful.length > 0 ? meaningful[0] : words[0] || categoryLabel.split(' ')[0];
+    
+    const terms: string[] = [];
+    // Add the core term alone
+    terms.push(core);
+    // Add 2-word combos with the core
+    for (const w of meaningful.slice(1, 4)) {
+        if (w !== core) terms.push(`${w} ${core}`);
     }
+    // Add full short version if <= 3 words
+    if (meaningful.length <= 3) terms.push(meaningful.join(' '));
+    
+    return [...new Set(terms)].slice(0, 4);
+}
 
+function buildSerpQuery(platform: SignalPlatform, categoryLabel: string, anchors: string[], topKeywords?: string[]): string[] {
+    const coreTerms = extractCoreTerms(categoryLabel);
+    const primary = coreTerms[0] || categoryLabel;
     const queries: string[] = [];
 
     switch (platform) {
         case 'GOOGLE_SERP':
-            queries.push(`${categoryLabel} reviews`);
-            for (const chunk of anchorChunks.slice(0, 2)) {
-                queries.push(`${categoryLabel} (${chunk.join(' OR ')})`);
+            queries.push(`${primary} review`);
+            queries.push(`best ${primary} brand India`);
+            if (coreTerms[1]) queries.push(`${coreTerms[1]} vs ${coreTerms[0]}`);
+            // Use top corpus keywords as queries
+            if (topKeywords) {
+                for (const kw of topKeywords.slice(0, 3)) {
+                    queries.push(kw);
+                }
+            }
+            // Anchor-based queries
+            for (const anchor of anchors.slice(0, 2)) {
+                queries.push(`${primary} ${anchor}`);
             }
             break;
         case 'REDDIT':
-            queries.push(`site:reddit.com "${categoryLabel}" review`);
-            if (anchorChunks[0]) {
-                queries.push(`site:reddit.com "${categoryLabel}" (${anchorChunks[0].join(' OR ')})`);
-            }
+            queries.push(`site:reddit.com ${primary} review`);
+            queries.push(`site:reddit.com best ${primary}`);
+            queries.push(`site:reddit.com ${primary} recommendation`);
+            if (topKeywords?.[0]) queries.push(`site:reddit.com ${topKeywords[0]}`);
             break;
         case 'YOUTUBE':
-            queries.push(`site:youtube.com inurl:watch "${categoryLabel}" review`);
+            queries.push(`${primary} review`);
+            queries.push(`best ${primary}`);
+            queries.push(`${primary} comparison`);
+            if (topKeywords?.[0]) queries.push(topKeywords[0]);
             break;
         case 'AMAZON':
-            queries.push(`site:amazon.in "${categoryLabel}"`);
+            queries.push(`site:amazon.in ${primary}`);
+            queries.push(`site:amazon.in best ${primary}`);
             break;
         case 'QUORA':
-            queries.push(`site:quora.com "${categoryLabel}"`);
+            queries.push(`site:quora.com best ${primary}`);
+            queries.push(`site:quora.com ${primary} review`);
             break;
         case 'TWITTER':
-            queries.push(`site:twitter.com inurl:/status/ "${categoryLabel}" (review OR "worth it")`);
+            queries.push(`site:twitter.com ${primary} review`);
             break;
     }
 
-    return queries.slice(0, 4); // Max 4 queries per platform
+    return queries.slice(0, 6); // Max 6 queries per platform
 }
 
 function classifySignalType(url: string, platform: SignalPlatform): 'Content' | 'Conversation' | 'Transaction' {
@@ -194,28 +228,45 @@ async function harvestPlatform(
 ): Promise<HarvestResult> {
     const start = Date.now();
     const anchors = normalizeAnchors(category.anchors || []);
-    const queries = buildSerpQuery(platform, category.category, anchors);
+    
+    // Load top corpus keywords for better query diversity
+    let topKeywords: string[] = [];
+    try {
+        const corpus = await PlatformDB.getCorpus(category.id);
+        if (corpus?.rows) {
+            topKeywords = corpus.rows
+                .filter((r: any) => (r.volume || 0) > 0)
+                .sort((a: any, b: any) => (b.volume || 0) - (a.volume || 0))
+                .slice(0, 10)
+                .map((r: any) => r.keyword_text || r.keyword || '');
+        }
+    } catch (e) { /* continue without corpus keywords */ }
+
+    const queries = buildSerpQuery(platform, category.category, anchors, topKeywords);
     const signals = new Map<string, HarvestedSignal>(); // URL-keyed for dedupe
     const TARGET = 30;
 
-    onProgress?.(`[${platform}] Running ${queries.length} queries...`);
+    onProgress?.(`[${platform}] Running ${queries.length} queries: ${queries.slice(0, 2).join(', ')}...`);
 
     for (const query of queries) {
         if (signals.size >= TARGET) break;
 
         try {
             const items = await callDfsSerpLive(query, creds, locationCode, language);
+            onProgress?.(`[${platform}] Query "${query.substring(0, 50)}" → ${items.length} items`);
 
             for (const item of items) {
                 if (signals.size >= TARGET) break;
                 if (!item.url) continue;
 
-                // Platform-specific URL filter
+                // Platform-specific URL filter (only for site:-targeted platforms)
                 if (platform === 'REDDIT' && !item.url.includes('reddit.com')) continue;
-                if (platform === 'YOUTUBE' && !item.url.includes('youtube.com') && !item.url.includes('youtu.be')) continue;
                 if (platform === 'AMAZON' && !item.url.includes('amazon.')) continue;
                 if (platform === 'QUORA' && !item.url.includes('quora.com')) continue;
                 if (platform === 'TWITTER' && !item.url.includes('twitter.com') && !item.url.includes('x.com')) continue;
+                // YouTube: accept youtube.com OR youtu.be, but also video results from Google
+                if (platform === 'YOUTUBE' && !item.url.includes('youtube.com') && !item.url.includes('youtu.be')) continue;
+                // Google SERP: accept ALL results (no filter)
 
                 const id = stableId(platform, item.url);
                 if (signals.has(item.url)) continue;
@@ -231,7 +282,7 @@ async function harvestPlatform(
                     categoryName: category.category,
                     collectedAt: new Date().toISOString(),
                     signalType: classifySignalType(item.url, platform),
-                    confidence: 0.5, // Default — enrichment would refine this
+                    confidence: 0.5,
                 });
             }
         } catch (e: any) {
