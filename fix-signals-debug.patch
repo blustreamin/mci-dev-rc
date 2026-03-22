@@ -1,0 +1,96 @@
+diff --git a/src/services/platformSignalHarvester.ts b/src/services/platformSignalHarvester.ts
+index 5099bf0..47bd5c9 100644
+--- a/src/services/platformSignalHarvester.ts
++++ b/src/services/platformSignalHarvester.ts
+@@ -161,6 +161,7 @@ function normalizeAnchors(rawAnchors: string[], limit: number = 8): string[] {
+ }
+ 
+ // --- CORE DFS SERP CALL ---
++// Uses the same proxy pattern as DataForSeoClient (which works for volume calls)
+ 
+ async function callDfsSerpLive(
+     query: string,
+@@ -169,7 +170,6 @@ async function callDfsSerpLive(
+     language: string,
+     depth: number = 20
+ ): Promise<any[]> {
+-    // Use platform's proxy-aware path
+     const config = await CredsStore.resolveDfsConfig();
+     const proxyUrl = config.proxyUrl;
+ 
+@@ -183,24 +183,50 @@ async function callDfsSerpLive(
+     const path = 'serp/google/organic/live/advanced';
+ 
+     if (proxyUrl) {
+-        // Proxy mode
+         const baseUrl = proxyUrl.replace(/\/$/, '');
+         const url = `${baseUrl}/dfs/proxy`;
+         const proxyPayload = { path, payload, creds, method: 'POST' };
+ 
++        console.log(`[SignalHarvester][SERP] Proxy call: ${url} query="${query.substring(0, 50)}" loc=${locationCode}`);
++
++        const controller = new AbortController();
++        const timeout = setTimeout(() => controller.abort(), 30000);
++
+         const res = await fetch(url, {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json', 'X-API-Key': 'dev-key' },
+             body: JSON.stringify(proxyPayload),
++            signal: controller.signal,
+         });
++        clearTimeout(timeout);
++
++        if (!res.ok) {
++            const txt = await res.text().catch(() => '');
++            console.warn(`[SignalHarvester][SERP] Proxy error ${res.status}: ${txt.substring(0, 200)}`);
++            throw new Error(`DFS Proxy ${res.status}`);
++        }
+ 
+-        if (!res.ok) throw new Error(`DFS Proxy ${res.status}`);
+         const wrapper = await res.json();
+         const data = wrapper.data || wrapper;
+-        return data.tasks?.[0]?.result?.[0]?.items || [];
++        const taskResult = data.tasks?.[0]?.result?.[0];
++        const items = taskResult?.items || [];
++        const taskStatus = data.tasks?.[0]?.status_code;
++        const taskMsg = data.tasks?.[0]?.status_message;
++        console.log(`[SignalHarvester][SERP] Proxy response: status=${taskStatus} msg="${taskMsg}" items=${items.length} resultType=${taskResult?.type} for "${query.substring(0, 40)}"`);
++        if (items.length === 0) {
++            console.log(`[SignalHarvester][SERP] Raw task keys: ${Object.keys(data.tasks?.[0] || {}).join(',')}`);
++            console.log(`[SignalHarvester][SERP] Result[0] keys: ${Object.keys(taskResult || {}).join(',')}`);
++        }
++        // DFS SERP items can have type: "organic", "paid", "featured_snippet", etc.
++        // Filter to organic results which have url, title, description
++        const organicItems = items.filter((it: any) => it.type === 'organic' || it.url);
++        console.log(`[SignalHarvester][SERP] Organic items: ${organicItems.length} (of ${items.length} total)`);
++        return organicItems;
+     } else {
+         // Direct mode
+         const auth = btoa(`${creds.login}:${creds.password}`);
++        console.log(`[SignalHarvester][SERP] Direct call: query="${query.substring(0, 50)}" loc=${locationCode}`);
++
+         const res = await fetch(`https://api.dataforseo.com/v3/${path}`, {
+             method: 'POST',
+             headers: {
+@@ -210,9 +236,19 @@ async function callDfsSerpLive(
+             body: JSON.stringify(payload),
+         });
+ 
+-        if (!res.ok) throw new Error(`DFS Direct ${res.status}`);
++        if (!res.ok) {
++            const txt = await res.text().catch(() => '');
++            console.warn(`[SignalHarvester][SERP] Direct error ${res.status}: ${txt.substring(0, 200)}`);
++            throw new Error(`DFS Direct ${res.status}`);
++        }
++
+         const data = await res.json();
+-        return data.tasks?.[0]?.result?.[0]?.items || [];
++        const taskResult = data.tasks?.[0]?.result?.[0];
++        const items = taskResult?.items || [];
++        const taskStatus = data.tasks?.[0]?.status_code;
++        console.log(`[SignalHarvester][SERP] Direct response: status=${taskStatus} items=${items.length} for "${query.substring(0, 40)}"`);
++        const organicItems = items.filter((it: any) => it.type === 'organic' || it.url);
++        return organicItems;
+     }
+ }
+ 
