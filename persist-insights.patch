@@ -1,0 +1,51 @@
+diff --git a/src/console/DemandSweepView.tsx b/src/console/DemandSweepView.tsx
+index f09e7fd..a8ea61b 100644
+--- a/src/console/DemandSweepView.tsx
++++ b/src/console/DemandSweepView.tsx
+@@ -370,14 +370,38 @@ export const DemandSweepView: React.FC<DemandSweepViewProps> = ({ categories, re
+         const catId = activeItem.cat.id;
+         if (localInsights[catId] || generatingInsights.has(catId)) return;
+ 
+-        setGeneratingInsights(prev => new Set(prev).add(catId));
+-        const month = activeItem.res.trend_5y?.windowId || new Date().toISOString().slice(0, 7);
+-        
+-        DemandInsightsService.generate(catId, activeItem.res, month)
+-            .then(insight => {
+-                if (insight) setLocalInsights(prev => ({ ...prev, [catId]: insight }));
+-            })
+-            .finally(() => setGeneratingInsights(prev => { const n = new Set(prev); n.delete(catId); return n; }));
++        // Try loading cached insights from PlatformDB first
++        PlatformDB.getCache(`demand_insights_${catId}`).then(cached => {
++            if (cached) {
++                setLocalInsights(prev => ({ ...prev, [catId]: cached as DemandInsight }));
++                return;
++            }
++
++            // No cache — generate fresh
++            setGeneratingInsights(prev => new Set(prev).add(catId));
++            const month = activeItem.res.trend_5y?.windowId || new Date().toISOString().slice(0, 7);
++            
++            DemandInsightsService.generate(catId, activeItem.res, month)
++                .then(insight => {
++                    if (insight) {
++                        setLocalInsights(prev => ({ ...prev, [catId]: insight }));
++                        PlatformDB.setCache(`demand_insights_${catId}`, insight);
++                    }
++                })
++                .finally(() => setGeneratingInsights(prev => { const n = new Set(prev); n.delete(catId); return n; }));
++        }).catch(() => {
++            // Cache read failed — generate fresh
++            setGeneratingInsights(prev => new Set(prev).add(catId));
++            const month = activeItem.res.trend_5y?.windowId || new Date().toISOString().slice(0, 7);
++            DemandInsightsService.generate(catId, activeItem.res, month)
++                .then(insight => {
++                    if (insight) {
++                        setLocalInsights(prev => ({ ...prev, [catId]: insight }));
++                        PlatformDB.setCache(`demand_insights_${catId}`, insight);
++                    }
++                })
++                .finally(() => setGeneratingInsights(prev => { const n = new Set(prev); n.delete(catId); return n; }));
++        });
+     }, [activeItem?.res, activeItem?.cat.id]);
+ 
+     const handleRecompute = async () => {
