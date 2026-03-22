@@ -1,0 +1,89 @@
+diff --git a/src/services/categoryGenerationService.ts b/src/services/categoryGenerationService.ts
+index ac02a61..3e10e2c 100644
+--- a/src/services/categoryGenerationService.ts
++++ b/src/services/categoryGenerationService.ts
+@@ -61,27 +61,43 @@ export async function generateCategoryConfig(
+ 
+     const ai = new GoogleGenAI({ apiKey });
+     const startTime = Date.now();
+-    const STEP_TIMES = [15, 8, 8, 8, 8, 8]; // estimated seconds per step
++    const STEP_TIMES = [3, 15, 8, 8, 8, 8, 8]; // estimated seconds per step
+ 
+     const emitProgress = (step: number, phase: string, keywords: number) => {
+         const elapsed = (Date.now() - startTime) / 1000;
+         const remaining = STEP_TIMES.slice(step).reduce((s, v) => s + v, 0);
+-        onProgress?.({ step: step + 1, totalSteps: 6, phase, keywords, elapsedSec: Math.round(elapsed), estimatedRemainingSec: Math.round(remaining) });
++        onProgress?.({ step: step + 1, totalSteps: 7, phase, keywords, elapsedSec: Math.round(elapsed), estimatedRemainingSec: Math.round(remaining) });
+     };
+ 
+-    // --- Extract core product term from the (potentially long) category brief ---
+-    // "Indiska Paneer is a premium, artisanal fresh malai paneer brand..." → "paneer"
+-    const briefWords = input.categoryText.toLowerCase().split(/\s+/);
+-    const commonProducts = ['paneer', 'cheese', 'milk', 'yogurt', 'curd', 'butter', 'ghee', 'cream', 'shampoo', 'soap', 'oil', 'lotion', 'cream', 'serum', 'phone', 'laptop', 'car', 'bike', 'scooter', 'tea', 'coffee', 'snack', 'chips', 'biscuit', 'chocolate', 'juice', 'water', 'bread', 'rice', 'flour', 'sugar', 'salt', 'spice', 'masala'];
+-    let coreProduct = commonProducts.find(p => briefWords.includes(p)) || '';
+-    if (!coreProduct) {
+-        // Fallback: take the most repeated 4+ letter word from the brief
+-        const wordCount: Record<string, number> = {};
+-        briefWords.filter(w => w.length >= 4 && !/^(premium|artisanal|brand|market|product|quality|fresh|that|this|with|from|their|which|about|into|have|been|will|also)$/.test(w)).forEach(w => { wordCount[w] = (wordCount[w] || 0) + 1; });
+-        const sorted = Object.entries(wordCount).sort((a, b) => b[1] - a[1]);
+-        coreProduct = sorted[0]?.[0] || briefWords[0] || 'product';
++    // --- CALL 0: Extract core product term via LLM (deterministic) ---
++    // This ensures consistent extraction regardless of brief phrasing
++    let coreProduct = '';
++    try {
++        emitProgress(0, 'Extracting core product term from brief...', 0);
++        const extractResp = await ai.models.generateContent({
++            model: MODEL,
++            contents: `Extract the SINGLE core product term from this brief. Return ONLY the product term (1-2 words, lowercase). No explanation.
++
++Brief: "${input.categoryText}"
++
++Examples:
++- "Indiska Paneer is a premium artisanal fresh malai paneer brand..." → "paneer"
++- "A luxury beard oil brand targeting urban men..." → "beard oil"  
++- "Premium organic dog food for Indian pet owners..." → "dog food"
++- "Electric scooter startup competing with Ola and Ather..." → "electric scooter"
++
++Return ONLY the product term:`,
++            config: { maxOutputTokens: 50, temperature: 0 },
++        });
++        coreProduct = (extractResp?.text || '').trim().toLowerCase().replace(/['"]/g, '');
++    } catch (e) {
++        // Fallback: heuristic extraction
++        const briefWords = input.categoryText.toLowerCase().split(/\s+/);
++        const commonProducts = ['paneer', 'cheese', 'milk', 'yogurt', 'butter', 'ghee', 'shampoo', 'soap', 'oil', 'cream', 'serum', 'phone', 'laptop', 'car', 'bike', 'scooter', 'tea', 'coffee', 'snack', 'chocolate'];
++        coreProduct = commonProducts.find(p => briefWords.includes(p)) || briefWords.filter(w => w.length >= 4)[0] || 'product';
+     }
+-    console.log(`[CategoryGen] Core product term: "${coreProduct}" from brief`);
++    console.log(`[CategoryGen] Core product term: "${coreProduct}"`);
++    emitProgress(0, `Core product: "${coreProduct}"`, 0);
+ 
+     // --- CALL 1: Structure + 150 seed keywords (MANDATORY GENERIC + BRAND SPECIFIC) ---
+     const prompt1 = `You are a search keyword researcher. Keywords will be validated against Google Ads search volume data.
+@@ -128,6 +144,8 @@ RULES:
+ 3. Part B can be more niche but must still be plausible search queries.
+ 4. ${input.language} language terms where natural.
+ 5. NO duplicates. NO academic phrases.
++6. DETERMINISTIC ORDERING: Always start Part A with these exact keywords in order: "${coreProduct}", "${coreProduct} price", "best ${coreProduct}", "${coreProduct} near me", "buy ${coreProduct} online", "${coreProduct} brand", "${coreProduct} review". Then add the rest.
++7. For the SAME brief, you MUST generate the SAME keywords every time. Be systematic, not creative.
+ 
+ Output ONLY JSON.`;
+ 
+@@ -137,7 +155,7 @@ Output ONLY JSON.`;
+         const resp1 = await ai.models.generateContent({
+             model: MODEL,
+             contents: prompt1,
+-            config: { maxOutputTokens: 8000, temperature: 0.7 },
++            config: { maxOutputTokens: 8000, temperature: 0 },
+         });
+ 
+         const parsed = safeParseJSON(resp1?.text || '');
+@@ -190,7 +208,7 @@ Output ONLY a JSON array: ["keyword1", "keyword2", ...]`;
+                 const resp = await ai.models.generateContent({
+                     model: MODEL,
+                     contents: expandPrompt,
+-                    config: { maxOutputTokens: 4000, temperature: 0.8 },
++                    config: { maxOutputTokens: 4000, temperature: 0 },
+                 });
+                 const expanded = safeParseJSON(resp?.text || '');
+                 if (Array.isArray(expanded)) {
