@@ -18,7 +18,7 @@ import { PlatformDB } from './platformDB';
 import { SnapshotKeywordRow } from '../types';
 
 // --- CONFIG ---
-const DFS_BATCH_SIZE = 100;         // DFS accepts up to 700; 100 per call = 5 calls for 500 keywords
+const DFS_BATCH_SIZE = 50;          // 50 per call — faster response, better UX feedback
 const DISCOVERY_SEED_COUNT = 10;    // Number of seed keywords for expansion
 const DISCOVERY_MAX_NEW = 100;      // Cap on discovered keywords to add
 const MIN_VOLUME_THRESHOLD = 0;     // Include zero-volume rows (mark them as ZERO status)
