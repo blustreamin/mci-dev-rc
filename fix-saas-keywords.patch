@@ -1,0 +1,41 @@
+diff --git a/src/services/categoryGenerationService.ts b/src/services/categoryGenerationService.ts
+index a1b9402..75e12c4 100644
+--- a/src/services/categoryGenerationService.ts
++++ b/src/services/categoryGenerationService.ts
+@@ -134,7 +134,28 @@ Generate JSON:
+ IMPORTANT: Generate 8-12 subCategories covering distinct research dimensions.
+ 
+ CRITICAL KEYWORD SPLIT — your keywords will be checked against Google Ads. Zero-volume keywords are USELESS.
++${input.industry === 'Technology / SaaS' || input.industry === 'Financial Services' || input.categoryText.toLowerCase().match(/\b(saas|software|tool|app|platform|automation|crm|erp)\b/) ? `
++IMPORTANT: This is a B2B/SaaS/Technology category. DO NOT use consumer product patterns like "near me", "price per kg", "home delivery", "recipe". Instead use SaaS/tech search patterns:
+ 
++PART A: MANDATORY GENERIC KEYWORDS (80 keywords) — These MUST have search volume:
++- ${isNonLatin ? 'ALL Part A keywords MUST be in English (Latin script) for Google Ads volume data.' : ''}
++- Head terms: "${coreProduct}", "best ${coreProduct}", "${coreProduct} tools", "${coreProduct} software", "free ${coreProduct}"
++- Brand queries: "[Brand] pricing", "[Brand] review", "[Brand] alternative", "[Brand] vs [Competitor]" for top 10 tools
++- Pricing: "[Brand] pricing", "[Brand] free plan", "${coreProduct} pricing", "free ${coreProduct} tools", "cheap ${coreProduct}"
++- Comparison: "${coreProduct} vs [alternative]", "best ${coreProduct} for small business", "${coreProduct} comparison", "top ${coreProduct} tools 2025"
++- How-to: "how to do ${coreProduct}", "${coreProduct} tutorial", "${coreProduct} for beginners", "how to set up ${coreProduct}"
++- Use cases: "${coreProduct} for startups", "${coreProduct} for freelancers", "${coreProduct} for agencies", "${coreProduct} for ecommerce"
++- Reviews: "best ${coreProduct}", "${coreProduct} review", "top 10 ${coreProduct} tools", "${coreProduct} comparison ${new Date().getFullYear()}"
++- Keywords should be SHORT (2-5 words). Long-tail SaaS keywords like "${coreProduct} software for small business owners" have ZERO volume. Keep it concise.
++- Include individual brand names as standalone keywords: "Hootsuite", "Buffer", "Canva", etc.
++
++PART B: BRIEF-SPECIFIC KEYWORDS (70 keywords) — Niche terms:
++- ${isNonLatin ? '40 in English + 30 in ' + input.language + ' script (with romanized versions where applicable)' : 'Can include ' + input.language + ' terms where natural'}
++- Specific use cases from the brief
++- Adjacent tool categories (e.g., if social media automation, also include "content scheduler", "social media analytics", "instagram scheduler")
++- Problem keywords: "how to grow Instagram followers", "schedule posts automatically", "manage multiple social accounts"
++- Feature keywords: "social media calendar", "auto post to Instagram", "bulk schedule posts"
++` : `
+ PART A: MANDATORY GENERIC KEYWORDS (80 keywords) — These MUST have search volume:
+ - ${isNonLatin ? 'ALL Part A keywords MUST be in English (Latin script) for Google Ads volume data.' : ''}
+ - Head terms: "${coreProduct}", "${coreProduct} price", "${coreProduct} near me", "best ${coreProduct}", "buy ${coreProduct} online"
+@@ -152,6 +173,7 @@ PART B: BRIEF-SPECIFIC KEYWORDS (70 keywords) — Niche terms from the brief:
+ - Premium/artisanal variants, texture terms, SKU-related searches
+ - Regional terms specific to the geography mentioned in the brief
+ - Competitive positioning queries
++`}
+ 
+ RULES:
+ 1. Every keyword = a real Google search query. NOT research themes.
