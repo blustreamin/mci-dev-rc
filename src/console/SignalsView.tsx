@@ -9,7 +9,9 @@ import { PlatformSignalHarvester, HarvestedSignal, SignalPlatform } from '../ser
 import { useProjectStore } from '../config/ProjectStore';
 
 const PLATFORM_META: Record<string, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
-    'GOOGLE_SERP': { label: 'Google', color: '#4285f4', bg: 'bg-blue-50', icon: <Globe className="w-3 h-3" /> },
+    'GOOGLE':      { label: 'Google', color: '#4285f4', bg: 'bg-blue-50', icon: <Globe className="w-3 h-3" /> },
+    'BLOG':        { label: 'Blog', color: '#6366f1', bg: 'bg-indigo-50', icon: <FileText className="w-3 h-3" /> },
+    'NEWS':        { label: 'News', color: '#0891b2', bg: 'bg-cyan-50', icon: <Globe className="w-3 h-3" /> },
     'REDDIT':      { label: 'Reddit', color: '#ff4500', bg: 'bg-orange-50', icon: <MessageSquare className="w-3 h-3" /> },
     'YOUTUBE':     { label: 'YouTube', color: '#ff0000', bg: 'bg-red-50', icon: <Youtube className="w-3 h-3" /> },
     'AMAZON':      { label: 'Amazon', color: '#ff9900', bg: 'bg-amber-50', icon: <ShoppingCart className="w-3 h-3" /> },
@@ -78,7 +80,7 @@ export const SignalsView: React.FC = () => {
         const result = await PlatformSignalHarvester.harvestAll(
             category,
             geo,
-            ['GOOGLE_SERP', 'REDDIT', 'YOUTUBE'],
+            [],
             (msg) => {
                 setHarvestLog(prev => {
                     // Update last line if same platform prefix

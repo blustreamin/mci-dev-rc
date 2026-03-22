@@ -1,0 +1,594 @@
+diff --git a/src/console/SignalsView.tsx b/src/console/SignalsView.tsx
+index a680293..ff3a8ee 100644
+--- a/src/console/SignalsView.tsx
++++ b/src/console/SignalsView.tsx
+@@ -9,7 +9,9 @@ import { PlatformSignalHarvester, HarvestedSignal, SignalPlatform } from '../ser
+ import { useProjectStore } from '../config/ProjectStore';
+ 
+ const PLATFORM_META: Record<string, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
+-    'GOOGLE_SERP': { label: 'Google', color: '#4285f4', bg: 'bg-blue-50', icon: <Globe className="w-3 h-3" /> },
++    'GOOGLE':      { label: 'Google', color: '#4285f4', bg: 'bg-blue-50', icon: <Globe className="w-3 h-3" /> },
++    'BLOG':        { label: 'Blog', color: '#6366f1', bg: 'bg-indigo-50', icon: <FileText className="w-3 h-3" /> },
++    'NEWS':        { label: 'News', color: '#0891b2', bg: 'bg-cyan-50', icon: <Globe className="w-3 h-3" /> },
+     'REDDIT':      { label: 'Reddit', color: '#ff4500', bg: 'bg-orange-50', icon: <MessageSquare className="w-3 h-3" /> },
+     'YOUTUBE':     { label: 'YouTube', color: '#ff0000', bg: 'bg-red-50', icon: <Youtube className="w-3 h-3" /> },
+     'AMAZON':      { label: 'Amazon', color: '#ff9900', bg: 'bg-amber-50', icon: <ShoppingCart className="w-3 h-3" /> },
+@@ -78,7 +80,7 @@ export const SignalsView: React.FC = () => {
+         const result = await PlatformSignalHarvester.harvestAll(
+             category,
+             geo,
+-            ['GOOGLE_SERP', 'REDDIT', 'YOUTUBE'],
++            [],
+             (msg) => {
+                 setHarvestLog(prev => {
+                     // Update last line if same platform prefix
+diff --git a/src/services/platformSignalHarvester.ts b/src/services/platformSignalHarvester.ts
+index 47bd5c9..655e6df 100644
+--- a/src/services/platformSignalHarvester.ts
++++ b/src/services/platformSignalHarvester.ts
+@@ -1,22 +1,19 @@
+ /**
+- * PlatformSignalHarvester — SERP Signal Collection for Dynamic Categories
++ * PlatformSignalHarvester V2 — Uses Gemini + Google Search Grounding
+  * 
+- * Ported from blustream-signal-harvester-main with these changes:
+- * 1. Categories come from ProjectStore (dynamic) instead of hardcoded mensCareCategories
+- * 2. DFS calls go through the platform's proxy-aware DataForSeoClient
+- * 3. Results saved to PlatformDB instead of Firestore
+- * 4. Simplified: no Gemini enrichment in first pass (just raw SERP harvest)
++ * Instead of DFS SERP API (which requires a proxy that doesn't support SERP endpoints),
++ * this uses Gemini's built-in Google Search tool to find real market signals.
+  * 
+- * Provider coverage: Google SERP, Reddit, YouTube, Amazon.in, Quora, Twitter
++ * Flow: Top corpus keywords → Gemini searches Google → Returns real URLs with titles/snippets
+  */
+ 
+-import { CredsStore } from './demand_vNext/credsStore';
++import { GoogleGenAI } from "@google/genai";
+ import { PlatformDB } from './platformDB';
+ import { CategoryBaseline } from '../types';
+ 
+ // --- TYPES ---
+ 
+-export type SignalPlatform = 'GOOGLE_SERP' | 'REDDIT' | 'QUORA' | 'AMAZON' | 'YOUTUBE' | 'TWITTER';
++export type SignalPlatform = 'GOOGLE' | 'REDDIT' | 'YOUTUBE' | 'AMAZON' | 'QUORA' | 'TWITTER' | 'BLOG' | 'NEWS';
+ 
+ export interface HarvestedSignal {
+     id: string;
+@@ -32,16 +29,6 @@ export interface HarvestedSignal {
+     confidence: number;
+ }
+ 
+-export interface HarvestResult {
+-    ok: boolean;
+-    categoryId: string;
+-    platform: SignalPlatform;
+-    signals: HarvestedSignal[];
+-    queriesUsed: number;
+-    elapsedMs: number;
+-    error?: string;
+-}
+-
+ export interface FullHarvestResult {
+     ok: boolean;
+     categoryId: string;
+@@ -53,382 +40,211 @@ export interface FullHarvestResult {
+ 
+ type ProgressCallback = (message: string) => void;
+ 
+-// --- QUERY BUILDING ---
+-
+-function extractCoreTerms(categoryLabel: string): string[] {
+-    // Extract 2-3 word core terms from long category names
+-    // "Premium Fresh Malai Paneer & Artisanal Dairy" → ["malai paneer", "fresh paneer", "artisanal paneer"]
+-    const stopwords = new Set(['premium', 'fresh', 'artisanal', 'the', 'and', 'for', 'with', 'from', 'best', 'top', 'quality', 'organic', 'natural', 'pure']);
+-    const words = categoryLabel.toLowerCase().replace(/[&]/g, ' ').split(/\s+/).filter(w => w.length > 2);
+-    const meaningful = words.filter(w => !stopwords.has(w));
+-    
+-    // Find the core product term (longest meaningful word or last noun-like word)
+-    const core = meaningful.length > 0 ? meaningful[0] : words[0] || categoryLabel.split(' ')[0];
+-    
+-    const terms: string[] = [];
+-    // Add the core term alone
+-    terms.push(core);
+-    // Add 2-word combos with the core
+-    for (const w of meaningful.slice(1, 4)) {
+-        if (w !== core) terms.push(`${w} ${core}`);
+-    }
+-    // Add full short version if <= 3 words
+-    if (meaningful.length <= 3) terms.push(meaningful.join(' '));
+-    
+-    return [...new Set(terms)].slice(0, 4);
+-}
++// --- HELPERS ---
+ 
+-function buildSerpQuery(platform: SignalPlatform, categoryLabel: string, anchors: string[], topKeywords?: string[]): string[] {
+-    const coreTerms = extractCoreTerms(categoryLabel);
+-    const primary = coreTerms[0] || categoryLabel;
+-    const queries: string[] = [];
+-
+-    switch (platform) {
+-        case 'GOOGLE_SERP':
+-            queries.push(`${primary} review`);
+-            queries.push(`best ${primary} brand India`);
+-            if (coreTerms[1]) queries.push(`${coreTerms[1]} vs ${coreTerms[0]}`);
+-            // Use top corpus keywords as queries
+-            if (topKeywords) {
+-                for (const kw of topKeywords.slice(0, 3)) {
+-                    queries.push(kw);
+-                }
+-            }
+-            // Anchor-based queries
+-            for (const anchor of anchors.slice(0, 2)) {
+-                queries.push(`${primary} ${anchor}`);
+-            }
+-            break;
+-        case 'REDDIT':
+-            queries.push(`site:reddit.com ${primary} review`);
+-            queries.push(`site:reddit.com best ${primary}`);
+-            queries.push(`site:reddit.com ${primary} recommendation`);
+-            if (topKeywords?.[0]) queries.push(`site:reddit.com ${topKeywords[0]}`);
+-            break;
+-        case 'YOUTUBE':
+-            queries.push(`${primary} review`);
+-            queries.push(`best ${primary}`);
+-            queries.push(`${primary} comparison`);
+-            if (topKeywords?.[0]) queries.push(topKeywords[0]);
+-            break;
+-        case 'AMAZON':
+-            queries.push(`site:amazon.in ${primary}`);
+-            queries.push(`site:amazon.in best ${primary}`);
+-            break;
+-        case 'QUORA':
+-            queries.push(`site:quora.com best ${primary}`);
+-            queries.push(`site:quora.com ${primary} review`);
+-            break;
+-        case 'TWITTER':
+-            queries.push(`site:twitter.com ${primary} review`);
+-            break;
+-    }
++function getApiKey(): string | undefined {
++    try { return (import.meta as any).env?.VITE_GOOGLE_API_KEY || (import.meta as any).env?.VITE_GEMINI_API_KEY; } catch { return undefined; }
++}
+ 
+-    return queries.slice(0, 6); // Max 6 queries per platform
++function classifyPlatform(url: string): SignalPlatform {
++    if (url.includes('reddit.com')) return 'REDDIT';
++    if (url.includes('youtube.com') || url.includes('youtu.be')) return 'YOUTUBE';
++    if (url.includes('amazon.')) return 'AMAZON';
++    if (url.includes('quora.com')) return 'QUORA';
++    if (url.includes('twitter.com') || url.includes('x.com')) return 'TWITTER';
++    if (url.includes('news.') || url.includes('ndtv.') || url.includes('timesofindia') || url.includes('economictimes')) return 'NEWS';
++    return 'BLOG';
+ }
+ 
+-function classifySignalType(url: string, platform: SignalPlatform): 'Content' | 'Conversation' | 'Transaction' {
+-    if (platform === 'AMAZON') return 'Transaction';
++function classifyType(url: string, platform: SignalPlatform): 'Content' | 'Conversation' | 'Transaction' {
++    if (['AMAZON'].includes(platform)) return 'Transaction';
+     if (['REDDIT', 'QUORA', 'TWITTER'].includes(platform)) return 'Conversation';
+-    if (platform === 'YOUTUBE') return 'Content';
+-    // Google SERP — heuristic
+-    if (url.includes('amazon.') || url.includes('flipkart.') || url.includes('/buy')) return 'Transaction';
+-    if (url.includes('reddit.') || url.includes('quora.')) return 'Conversation';
+     return 'Content';
+ }
+ 
+-function stableId(platform: string, url: string): string {
+-    // Simple hash for deduplication
++function stableId(url: string): string {
+     let hash = 0;
+-    const str = `${platform}:${url}`;
+-    for (let i = 0; i < str.length; i++) {
+-        hash = ((hash << 5) - hash) + str.charCodeAt(i);
++    for (let i = 0; i < url.length; i++) {
++        hash = ((hash << 5) - hash) + url.charCodeAt(i);
+         hash = hash & hash;
+     }
+-    return `sig_${platform.toLowerCase()}_${Math.abs(hash).toString(36)}`;
++    return `sig_${Math.abs(hash).toString(36)}`;
+ }
+ 
+-function normalizeAnchors(rawAnchors: string[], limit: number = 8): string[] {
+-    const terms = new Set<string>();
+-    for (const raw of rawAnchors) {
+-        const parts = raw.split(/[\/&(),]+/);
+-        for (const part of parts) {
+-            const clean = part.trim().toLowerCase();
+-            if (clean.length >= 3) terms.add(clean);
+-        }
+-    }
+-    return Array.from(terms).slice(0, limit);
+-}
+-
+-// --- CORE DFS SERP CALL ---
+-// Uses the same proxy pattern as DataForSeoClient (which works for volume calls)
++// --- GEMINI SEARCH HARVEST ---
+ 
+-async function callDfsSerpLive(
++async function harvestWithGemini(
+     query: string,
+-    creds: { login: string; password: string },
+-    locationCode: number,
+-    language: string,
+-    depth: number = 20
+-): Promise<any[]> {
+-    const config = await CredsStore.resolveDfsConfig();
+-    const proxyUrl = config.proxyUrl;
+-
+-    const payload = [{
+-        keyword: query,
+-        location_code: locationCode,
+-        language_code: language,
+-        depth: depth,
+-    }];
+-
+-    const path = 'serp/google/organic/live/advanced';
+-
+-    if (proxyUrl) {
+-        const baseUrl = proxyUrl.replace(/\/$/, '');
+-        const url = `${baseUrl}/dfs/proxy`;
+-        const proxyPayload = { path, payload, creds, method: 'POST' };
+-
+-        console.log(`[SignalHarvester][SERP] Proxy call: ${url} query="${query.substring(0, 50)}" loc=${locationCode}`);
+-
+-        const controller = new AbortController();
+-        const timeout = setTimeout(() => controller.abort(), 30000);
+-
+-        const res = await fetch(url, {
+-            method: 'POST',
+-            headers: { 'Content-Type': 'application/json', 'X-API-Key': 'dev-key' },
+-            body: JSON.stringify(proxyPayload),
+-            signal: controller.signal,
+-        });
+-        clearTimeout(timeout);
++    categoryId: string,
++    categoryName: string,
++    onProgress?: ProgressCallback,
++): Promise<HarvestedSignal[]> {
++    const apiKey = getApiKey();
++    if (!apiKey) return [];
+ 
+-        if (!res.ok) {
+-            const txt = await res.text().catch(() => '');
+-            console.warn(`[SignalHarvester][SERP] Proxy error ${res.status}: ${txt.substring(0, 200)}`);
+-            throw new Error(`DFS Proxy ${res.status}`);
+-        }
++    const ai = new GoogleGenAI({ apiKey });
+ 
+-        const wrapper = await res.json();
+-        const data = wrapper.data || wrapper;
+-        const taskResult = data.tasks?.[0]?.result?.[0];
+-        const items = taskResult?.items || [];
+-        const taskStatus = data.tasks?.[0]?.status_code;
+-        const taskMsg = data.tasks?.[0]?.status_message;
+-        console.log(`[SignalHarvester][SERP] Proxy response: status=${taskStatus} msg="${taskMsg}" items=${items.length} resultType=${taskResult?.type} for "${query.substring(0, 40)}"`);
+-        if (items.length === 0) {
+-            console.log(`[SignalHarvester][SERP] Raw task keys: ${Object.keys(data.tasks?.[0] || {}).join(',')}`);
+-            console.log(`[SignalHarvester][SERP] Result[0] keys: ${Object.keys(taskResult || {}).join(',')}`);
+-        }
+-        // DFS SERP items can have type: "organic", "paid", "featured_snippet", etc.
+-        // Filter to organic results which have url, title, description
+-        const organicItems = items.filter((it: any) => it.type === 'organic' || it.url);
+-        console.log(`[SignalHarvester][SERP] Organic items: ${organicItems.length} (of ${items.length} total)`);
+-        return organicItems;
+-    } else {
+-        // Direct mode
+-        const auth = btoa(`${creds.login}:${creds.password}`);
+-        console.log(`[SignalHarvester][SERP] Direct call: query="${query.substring(0, 50)}" loc=${locationCode}`);
+-
+-        const res = await fetch(`https://api.dataforseo.com/v3/${path}`, {
+-            method: 'POST',
+-            headers: {
+-                'Authorization': `Basic ${auth}`,
+-                'Content-Type': 'application/json',
+-            },
+-            body: JSON.stringify(payload),
+-        });
++    const prompt = `Search Google for: "${query}"
+ 
+-        if (!res.ok) {
+-            const txt = await res.text().catch(() => '');
+-            console.warn(`[SignalHarvester][SERP] Direct error ${res.status}: ${txt.substring(0, 200)}`);
+-            throw new Error(`DFS Direct ${res.status}`);
+-        }
++Return the top 10 most relevant search results as a JSON array. For each result, include:
++- url: the full URL
++- title: the page title
++- snippet: a 1-2 sentence description of the content
+ 
+-        const data = await res.json();
+-        const taskResult = data.tasks?.[0]?.result?.[0];
+-        const items = taskResult?.items || [];
+-        const taskStatus = data.tasks?.[0]?.status_code;
+-        console.log(`[SignalHarvester][SERP] Direct response: status=${taskStatus} items=${items.length} for "${query.substring(0, 40)}"`);
+-        const organicItems = items.filter((it: any) => it.type === 'organic' || it.url);
+-        return organicItems;
+-    }
+-}
++OUTPUT FORMAT (strict JSON array):
++[{"url": "https://...", "title": "...", "snippet": "..."}]
+ 
+-// --- SINGLE PLATFORM HARVEST ---
++Only return real, existing URLs from the search results. Do NOT make up URLs.
++Output ONLY the JSON array, nothing else.`;
+ 
+-async function harvestPlatform(
+-    platform: SignalPlatform,
+-    category: CategoryBaseline,
+-    creds: { login: string; password: string },
+-    locationCode: number,
+-    language: string,
+-    onProgress?: ProgressCallback,
+-): Promise<HarvestResult> {
+-    const start = Date.now();
+-    const anchors = normalizeAnchors(category.anchors || []);
+-    
+-    // Load top corpus keywords for better query diversity
+-    let topKeywords: string[] = [];
+     try {
+-        const corpus = await PlatformDB.getCorpus(category.id);
+-        if (corpus?.rows) {
+-            topKeywords = corpus.rows
+-                .filter((r: any) => (r.volume || 0) > 0)
+-                .sort((a: any, b: any) => (b.volume || 0) - (a.volume || 0))
+-                .slice(0, 10)
+-                .map((r: any) => r.keyword_text || r.keyword || '');
+-        }
+-    } catch (e) { /* continue without corpus keywords */ }
+-
+-    const queries = buildSerpQuery(platform, category.category, anchors, topKeywords);
+-    const signals = new Map<string, HarvestedSignal>(); // URL-keyed for dedupe
+-    const TARGET = 30;
+-
+-    onProgress?.(`[${platform}] Running ${queries.length} queries: ${queries.slice(0, 2).join(', ')}...`);
++        const resp = await ai.models.generateContent({
++            model: 'gemini-2.0-flash',
++            contents: prompt,
++            config: {
++                tools: [{ googleSearch: {} }],
++            },
++        });
+ 
+-    for (const query of queries) {
+-        if (signals.size >= TARGET) break;
++        const text = resp.text || '';
++        // Extract JSON from response (might have markdown wrapping)
++        const jsonMatch = text.match(/\[[\s\S]*\]/);
++        if (!jsonMatch) {
++            console.warn(`[SignalHarvester] No JSON array found in response for "${query}"`);
++            return [];
++        }
+ 
+-        try {
+-            const items = await callDfsSerpLive(query, creds, locationCode, language);
+-            onProgress?.(`[${platform}] Query "${query.substring(0, 50)}" → ${items.length} items`);
+-
+-            for (const item of items) {
+-                if (signals.size >= TARGET) break;
+-                if (!item.url) continue;
+-
+-                // Platform-specific URL filter (only for site:-targeted platforms)
+-                if (platform === 'REDDIT' && !item.url.includes('reddit.com')) continue;
+-                if (platform === 'AMAZON' && !item.url.includes('amazon.')) continue;
+-                if (platform === 'QUORA' && !item.url.includes('quora.com')) continue;
+-                if (platform === 'TWITTER' && !item.url.includes('twitter.com') && !item.url.includes('x.com')) continue;
+-                // YouTube: accept youtube.com OR youtu.be, but also video results from Google
+-                if (platform === 'YOUTUBE' && !item.url.includes('youtube.com') && !item.url.includes('youtu.be')) continue;
+-                // Google SERP: accept ALL results (no filter)
+-
+-                const id = stableId(platform, item.url);
+-                if (signals.has(item.url)) continue;
+-
+-                signals.set(item.url, {
+-                    id,
+-                    url: item.url,
+-                    title: item.title || 'Untitled',
+-                    snippet: item.description || '',
++        const parsed = JSON.parse(jsonMatch[0]);
++        if (!Array.isArray(parsed)) return [];
++
++        return parsed
++            .filter((r: any) => r.url && r.title)
++            .map((r: any) => {
++                const platform = classifyPlatform(r.url);
++                return {
++                    id: stableId(r.url),
++                    url: r.url,
++                    title: r.title,
++                    snippet: r.snippet || '',
+                     platform,
+                     queryUsed: query,
+-                    categoryId: category.id,
+-                    categoryName: category.category,
++                    categoryId,
++                    categoryName,
+                     collectedAt: new Date().toISOString(),
+-                    signalType: classifySignalType(item.url, platform),
+-                    confidence: 0.5,
+-                });
+-            }
+-        } catch (e: any) {
+-            onProgress?.(`[${platform}] Query failed: ${e.message}`);
+-        }
+-
+-        // Rate limit between queries
+-        await new Promise(r => setTimeout(r, 500));
++                    signalType: classifyType(r.url, platform),
++                    confidence: 0.7,
++                };
++            });
++
++    } catch (e: any) {
++        console.warn(`[SignalHarvester] Gemini search failed for "${query}": ${e.message}`);
++        return [];
+     }
+-
+-    const result = Array.from(signals.values());
+-    onProgress?.(`[${platform}] Done: ${result.length} signals`);
+-
+-    return {
+-        ok: true,
+-        categoryId: category.id,
+-        platform,
+-        signals: result,
+-        queriesUsed: queries.length,
+-        elapsedMs: Date.now() - start,
+-    };
+ }
+ 
+ // --- PUBLIC API ---
+ 
+ export const PlatformSignalHarvester = {
+ 
+-    /**
+-     * Harvest signals for a single platform + category.
+-     */
+-    async harvestSingle(
+-        platform: SignalPlatform,
+-        category: CategoryBaseline,
+-        geo: { locationCode: number; language: string },
+-        onProgress?: ProgressCallback,
+-    ): Promise<HarvestResult> {
+-        const creds = await CredsStore.get();
+-        if (!creds) {
+-            return { ok: false, categoryId: category.id, platform, signals: [], queriesUsed: 0, elapsedMs: 0, error: 'DFS_CREDS_MISSING' };
+-        }
+-
+-        return harvestPlatform(platform, category, creds, geo.locationCode, geo.language, onProgress);
+-    },
+-
+-    /**
+-     * Harvest signals across all platforms for a category.
+-     * This is the main entry point for the platform.
+-     */
+     async harvestAll(
+         category: CategoryBaseline,
+         geo: { locationCode: number; language: string },
+-        platforms: SignalPlatform[] = ['GOOGLE_SERP', 'REDDIT', 'YOUTUBE'],
++        _platforms: string[] = [], // Ignored — Gemini searches all
+         onProgress?: ProgressCallback,
+     ): Promise<FullHarvestResult> {
+         const start = Date.now();
+-        const creds = await CredsStore.get();
+-        if (!creds) {
+-            return { ok: false, categoryId: category.id, totalSignals: 0, byPlatform: {}, elapsedMs: 0, errors: ['DFS_CREDS_MISSING'] };
+-        }
++        const categoryId = category.id;
++        const categoryName = category.category;
++
++        // Build search queries from category context
++        const coreTerms: string[] = [];
++        const words = categoryName.toLowerCase().replace(/[&]/g, ' ').split(/\s+/).filter((w: string) => w.length > 2);
++        const stopwords = new Set(['premium', 'fresh', 'artisanal', 'the', 'and', 'for', 'with', 'specialty']);
++        const meaningful = words.filter((w: string) => !stopwords.has(w));
++        const primary = meaningful.slice(0, 2).join(' ') || words[0] || categoryName;
++
++        // Load top corpus keywords for query diversity
++        let topKeywords: string[] = [];
++        try {
++            const corpus = await PlatformDB.getCorpus(categoryId);
++            if (corpus?.rows) {
++                topKeywords = corpus.rows
++                    .filter((r: any) => (r.volume || 0) > 0)
++                    .sort((a: any, b: any) => (b.volume || 0) - (a.volume || 0))
++                    .slice(0, 8)
++                    .map((r: any) => r.keyword_text || '');
++            }
++        } catch (e) { /* continue */ }
+ 
+-        const allSignals: HarvestedSignal[] = [];
+-        const byPlatform: Record<string, number> = {};
++        // Build diverse queries
++        const queries = [
++            `${primary} review India`,
++            `best ${primary} brand`,
++            `${primary} reddit discussion`,
++            `${primary} YouTube review`,
++            `${primary} price comparison`,
++            ...topKeywords.slice(0, 3),
++        ].filter(q => q.length > 3);
++
++        onProgress?.(`Searching ${queries.length} queries via Google Search...`);
++
++        const allSignals = new Map<string, HarvestedSignal>(); // URL-dedupe
+         const errors: string[] = [];
+ 
+-        for (const platform of platforms) {
+-            onProgress?.(`Harvesting ${platform}...`);
++        for (let i = 0; i < queries.length; i++) {
++            const query = queries[i];
++            onProgress?.(`[${i + 1}/${queries.length}] Searching: "${query.substring(0, 50)}"...`);
+ 
+             try {
+-                const result = await harvestPlatform(platform, category, creds, geo.locationCode, geo.language, onProgress);
+-                allSignals.push(...result.signals);
+-                byPlatform[platform] = result.signals.length;
++                const signals = await harvestWithGemini(query, categoryId, categoryName, onProgress);
++                for (const sig of signals) {
++                    if (!allSignals.has(sig.url)) {
++                        allSignals.set(sig.url, sig);
++                    }
++                }
++                onProgress?.(`[${i + 1}/${queries.length}] "${query.substring(0, 30)}" → ${signals.length} results (total: ${allSignals.size})`);
+             } catch (e: any) {
+-                errors.push(`${platform}: ${e.message}`);
+-                byPlatform[platform] = 0;
++                errors.push(`${query}: ${e.message}`);
++            }
++
++            // Rate limit between Gemini calls
++            if (i < queries.length - 1) {
++                await new Promise(r => setTimeout(r, 1000));
+             }
+         }
+ 
++        const signalsArray = Array.from(allSignals.values());
++
++        // Count by platform
++        const byPlatform: Record<string, number> = {};
++        signalsArray.forEach(s => { byPlatform[s.platform] = (byPlatform[s.platform] || 0) + 1; });
++
+         // Save to PlatformDB
+-        const storeKey = `signals_${category.id}`;
+-        await PlatformDB.setCache(storeKey, {
+-            categoryId: category.id,
+-            signals: allSignals,
++        await PlatformDB.setCache(`signals_${categoryId}`, {
++            categoryId,
++            signals: signalsArray,
+             byPlatform,
+             harvestedAt: new Date().toISOString(),
+-            totalSignals: allSignals.length,
++            totalSignals: signalsArray.length,
+         });
+ 
+-        onProgress?.(`Done: ${allSignals.length} signals across ${platforms.length} platforms`);
++        onProgress?.(`Done: ${signalsArray.length} signals from ${queries.length} queries`);
+ 
+         return {
+             ok: true,
+-            categoryId: category.id,
+-            totalSignals: allSignals.length,
++            categoryId,
++            totalSignals: signalsArray.length,
+             byPlatform,
+             elapsedMs: Date.now() - start,
+             errors,
+         };
+     },
+ 
+-    /**
+-     * Get previously harvested signals from cache.
+-     */
+     async getCachedSignals(categoryId: string): Promise<HarvestedSignal[]> {
+         const cached = await PlatformDB.getCache<any>(`signals_${categoryId}`);
+         return cached?.signals || [];
+     },
+ 
+-    /**
+-     * Get signal stats for display.
+-     */
+     async getSignalStats(categoryId: string): Promise<{
+         total: number;
+         byPlatform: Record<string, number>;
