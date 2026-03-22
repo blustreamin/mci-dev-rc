@@ -238,7 +238,7 @@ export const ProjectCorpusBuilder = {
                     processedKeywords: i,
                 });
 
-                // Single attempt with 15s timeout — skip batch on timeout rather than blocking
+                // Single attempt with 45s timeout — DFS proxy can be slow
                 let result: any = null;
                 try {
                     const callPromise = DataForSeoClient.fetchGoogleVolumes_DFS({
@@ -249,19 +249,18 @@ export const ProjectCorpusBuilder = {
                         categoryId,
                         jobId: options.jobId,
                     });
-                    // 15s timeout per batch — if DFS is slow, skip and continue
                     result = await Promise.race([
                         callPromise,
-                        new Promise<any>((_, reject) => setTimeout(() => reject(new Error('DFS_TIMEOUT_15S')), 15000))
+                        new Promise<any>((_, reject) => setTimeout(() => reject(new Error('DFS_TIMEOUT_45S')), 45000))
                     ]);
                 } catch (e: any) {
-                    // Timeout or network error — try once more after 2s
+                    // Timeout or network error — try once more after 3s
                     emit('FETCHING_SEED_VOLUMES', `Batch ${batchNum}/${totalBatches}: ${e.message}, retrying...`, { processedKeywords: i });
-                    await new Promise(r => setTimeout(r, 2000));
+                    await new Promise(r => setTimeout(r, 3000));
                     try {
                         result = await Promise.race([
                             DataForSeoClient.fetchGoogleVolumes_DFS({ keywords: batch, location: locationCode, language: language, creds: dfsAuth, categoryId }),
-                            new Promise<any>((_, reject) => setTimeout(() => reject(new Error('DFS_TIMEOUT_15S')), 15000))
+                            new Promise<any>((_, reject) => setTimeout(() => reject(new Error('DFS_TIMEOUT_45S')), 45000))
                         ]);
                     } catch (e2: any) {
                         result = { ok: false, error: e2.message };
@@ -271,12 +270,8 @@ export const ProjectCorpusBuilder = {
                 if (result?.ok && result.parsedRows) {
                     allDfsRows.push(...result.parsedRows);
                     const validInBatch = result.parsedRows.filter((r: any) => (r.search_volume || 0) > 0).length;
-                    progress.validKeywords += validInBatch;
-                    progress.zeroKeywords += result.parsedRows.length - validInBatch;
-                    emit('FETCHING_SEED_VOLUMES', `Batch ${batchNum}/${totalBatches} ✓ +${result.parsedRows.length} rows (${validInBatch} valid)`, {
+                    emit('FETCHING_SEED_VOLUMES', `Batch ${batchNum}/${totalBatches} ✓ +${result.parsedRows.length} rows (${validInBatch} with volume)`, {
                         processedKeywords: i + batch.length,
-                        validKeywords: progress.validKeywords,
-                        zeroKeywords: progress.zeroKeywords,
                     });
                 } else {
                     console.warn(`[CorpusBuilder] Batch ${batchNum} skipped: ${result?.error}`);
