@@ -1,0 +1,137 @@
+diff --git a/src/services/categoryGenerationService.ts b/src/services/categoryGenerationService.ts
+index 75e12c4..1410463 100644
+--- a/src/services/categoryGenerationService.ts
++++ b/src/services/categoryGenerationService.ts
+@@ -134,54 +134,88 @@ Generate JSON:
+ IMPORTANT: Generate 8-12 subCategories covering distinct research dimensions.
+ 
+ CRITICAL KEYWORD SPLIT — your keywords will be checked against Google Ads. Zero-volume keywords are USELESS.
+-${input.industry === 'Technology / SaaS' || input.industry === 'Financial Services' || input.categoryText.toLowerCase().match(/\b(saas|software|tool|app|platform|automation|crm|erp)\b/) ? `
+-IMPORTANT: This is a B2B/SaaS/Technology category. DO NOT use consumer product patterns like "near me", "price per kg", "home delivery", "recipe". Instead use SaaS/tech search patterns:
+ 
+-PART A: MANDATORY GENERIC KEYWORDS (80 keywords) — These MUST have search volume:
+-- ${isNonLatin ? 'ALL Part A keywords MUST be in English (Latin script) for Google Ads volume data.' : ''}
++UNIVERSAL RULES FOR ALL KEYWORDS:
++- DIVERSITY IS EVERYTHING. Do NOT generate 50 variations of "${coreProduct} + [modifier]". Instead generate DIVERSE short keywords across the full category universe.
++- Keywords MUST be SHORT: 1-4 words. Anything over 5 words will have ZERO Google Ads volume. "best ${coreProduct}" = GOOD. "${coreProduct} for weight loss in India online buy" = ZERO VOLUME.
++- Include competitor/alternative brand names as STANDALONE 1-2 word keywords (e.g., "Ozempic", "Hootsuite", "Amul" — not "${coreProduct} vs Ozempic").
++- Include the CATEGORY name, PROBLEM/CONDITION name, and RELATED terms as separate keywords — not just the core product.
++- At least 30 keywords should be 1-2 words only. At least 30 should be brand names.
++${(() => {
++    const text = input.categoryText.toLowerCase();
++    const isPharma = input.industry === 'Health & Wellness' || text.match(/\b(pharma|drug|medicine|tablet|injection|capsule|syrup|dosage|prescription|generic|otc|semaglutide|insulin|vaccine|antibiotic)\b/);
++    const isSaaS = input.industry === 'Technology / SaaS' || input.industry === 'Financial Services' || text.match(/\b(saas|software|tool|app|platform|automation|crm|erp|api)\b/);
++    
++    if (isPharma) return `
++PHARMA/HEALTH CATEGORY DETECTED. Use pharmaceutical search patterns:
++
++PART A: MANDATORY GENERIC KEYWORDS (80 keywords):
++- ${isNonLatin ? 'ALL in English (Latin script).' : ''}
++- Generic drug names: "${coreProduct}" and ALL synonyms/salts (1-2 words each)
++- Brand names as STANDALONE keywords: List every brand selling this molecule (e.g., "Ozempic", "Wegovy", "Rybelsus", "Saxenda") — these are HIGH volume
++- Drug class: the therapeutic class as a keyword (e.g., "glp-1", "glp-1 agonist", "incretin")
++- Condition keywords: the conditions it treats as standalone keywords (e.g., "diabetes", "weight loss", "obesity", "type 2 diabetes")
++- Form factor: "injection", "tablet", "pen", "oral" as standalone and combined with product
++- Price/availability: "${coreProduct} price", "${coreProduct} cost", "${coreProduct} price India", "buy ${coreProduct}"
++- Comparison: "[Brand A] vs [Brand B]" for top 5 pairs
++- Side effects: "${coreProduct} side effects", "is ${coreProduct} safe"
++- Manufacturer names as standalone: e.g., "Novo Nordisk", "Eli Lilly", "Dr Reddys", "Lupin"
++- Related treatments: other drugs in the same class or for the same condition
++- DO NOT generate long-tail like "${coreProduct} injection mechanism of action" — nobody searches that
++
++PART B: BRIEF-SPECIFIC KEYWORDS (70 keywords):
++- ${isNonLatin ? '40 English + 30 ' + input.language : 'Can include ' + input.language + ' terms'}
++- Specific formulations, dosages, and strengths mentioned in the brief
++- Patient journey keywords: "doctor consultation for [condition]", "[condition] treatment options"
++- Insurance/cost: "[drug] insurance coverage", "affordable [drug]", "[drug] generic"
++- Lifestyle keywords: "weight loss tips", "diabetes management", "how to lose weight fast"`;
++    
++    if (isSaaS) return `
++B2B/SaaS/TECHNOLOGY CATEGORY DETECTED. Use SaaS search patterns:
++
++PART A: MANDATORY GENERIC KEYWORDS (80 keywords):
++- ${isNonLatin ? 'ALL in English (Latin script).' : ''}
+ - Head terms: "${coreProduct}", "best ${coreProduct}", "${coreProduct} tools", "${coreProduct} software", "free ${coreProduct}"
+-- Brand queries: "[Brand] pricing", "[Brand] review", "[Brand] alternative", "[Brand] vs [Competitor]" for top 10 tools
+-- Pricing: "[Brand] pricing", "[Brand] free plan", "${coreProduct} pricing", "free ${coreProduct} tools", "cheap ${coreProduct}"
+-- Comparison: "${coreProduct} vs [alternative]", "best ${coreProduct} for small business", "${coreProduct} comparison", "top ${coreProduct} tools 2025"
+-- How-to: "how to do ${coreProduct}", "${coreProduct} tutorial", "${coreProduct} for beginners", "how to set up ${coreProduct}"
+-- Use cases: "${coreProduct} for startups", "${coreProduct} for freelancers", "${coreProduct} for agencies", "${coreProduct} for ecommerce"
+-- Reviews: "best ${coreProduct}", "${coreProduct} review", "top 10 ${coreProduct} tools", "${coreProduct} comparison ${new Date().getFullYear()}"
+-- Keywords should be SHORT (2-5 words). Long-tail SaaS keywords like "${coreProduct} software for small business owners" have ZERO volume. Keep it concise.
+-- Include individual brand names as standalone keywords: "Hootsuite", "Buffer", "Canva", etc.
+-
+-PART B: BRIEF-SPECIFIC KEYWORDS (70 keywords) — Niche terms:
+-- ${isNonLatin ? '40 in English + 30 in ' + input.language + ' script (with romanized versions where applicable)' : 'Can include ' + input.language + ' terms where natural'}
+-- Specific use cases from the brief
+-- Adjacent tool categories (e.g., if social media automation, also include "content scheduler", "social media analytics", "instagram scheduler")
+-- Problem keywords: "how to grow Instagram followers", "schedule posts automatically", "manage multiple social accounts"
+-- Feature keywords: "social media calendar", "auto post to Instagram", "bulk schedule posts"
+-` : `
+-PART A: MANDATORY GENERIC KEYWORDS (80 keywords) — These MUST have search volume:
+-- ${isNonLatin ? 'ALL Part A keywords MUST be in English (Latin script) for Google Ads volume data.' : ''}
+-- Head terms: "${coreProduct}", "${coreProduct} price", "${coreProduct} near me", "best ${coreProduct}", "buy ${coreProduct} online"
+-- Brand queries: "[Brand] ${coreProduct}" for top 10 brands in ${input.countryName}
+-- Price: "${coreProduct} price", "cheap ${coreProduct}", "${coreProduct} cost", "${coreProduct} rate"
+-- Comparison: "${coreProduct} vs [alternative]", "best ${coreProduct} brand ${input.countryName}"
+-- How-to: "how to make ${coreProduct}", "${coreProduct} recipe", "homemade ${coreProduct}"
+-- Purchase: "buy ${coreProduct} online", "${coreProduct} delivery", "${coreProduct} near me"
+-- Health: "${coreProduct} benefits", "${coreProduct} nutrition", "is ${coreProduct} healthy"
+-- These are GENERIC — do NOT include the brand name from the brief. Just "${coreProduct}" + modifiers.
+-
+-PART B: BRIEF-SPECIFIC KEYWORDS (70 keywords) — Niche terms from the brief:
+-- ${isNonLatin ? '40 in English + 30 in ' + input.language + ' script (with romanized versions where applicable)' : 'Can include ' + input.language + ' terms where natural'}
+-- Brand-specific: terms related to the specific brand/positioning described in the brief
+-- Premium/artisanal variants, texture terms, SKU-related searches
+-- Regional terms specific to the geography mentioned in the brief
+-- Competitive positioning queries
+-`}
++- Brand names as STANDALONE keywords: List every competitor tool (e.g., "Hootsuite", "Buffer", "Canva") — HIGH volume
++- "[Brand] pricing", "[Brand] review", "[Brand] alternative", "[Brand] vs [Competitor]"
++- Category terms: the broader category as keywords (e.g., "social media tools", "marketing software", "scheduling app")
++- Problem keywords: what problem does this solve? (e.g., "how to schedule posts", "manage social media", "grow followers")
++- Use cases: "${coreProduct} for startups", "${coreProduct} for freelancers"
++- SHORT keywords only (2-4 words). "${coreProduct} software for small business owners" = ZERO VOLUME.
++
++PART B: BRIEF-SPECIFIC KEYWORDS (70 keywords):
++- ${isNonLatin ? '40 English + 30 ' + input.language : 'Can include ' + input.language + ' terms'}
++- Adjacent tool categories and feature keywords
++- Specific use cases from the brief`;
++    
++    return `
++CONSUMER PRODUCT CATEGORY:
++
++PART A: MANDATORY GENERIC KEYWORDS (80 keywords):
++- ${isNonLatin ? 'ALL in English (Latin script).' : ''}
++- Head terms: "${coreProduct}", "${coreProduct} price", "best ${coreProduct}", "buy ${coreProduct}"
++- Brand names as STANDALONE keywords: List every competitor brand (e.g., "Amul", "Mother Dairy") — HIGH volume
++- "[Brand] ${coreProduct}", "[Brand] price", "[Brand] review" for top 10 brands
++- Category terms: the broader category (e.g., if paneer, also "dairy products", "cheese", "protein food")
++- Price: "${coreProduct} price", "cheap ${coreProduct}", "${coreProduct} 1kg price"
++- Purchase: "buy ${coreProduct} online", "${coreProduct} near me", "${coreProduct} delivery"
++- How-to: "how to make ${coreProduct}", "${coreProduct} recipe"
++- Health: "${coreProduct} benefits", "${coreProduct} nutrition", "${coreProduct} calories"
++- DO NOT generate long-tail like "best ${coreProduct} brand in India for cooking" — keep it SHORT (1-4 words)
++
++PART B: BRIEF-SPECIFIC KEYWORDS (70 keywords):
++- ${isNonLatin ? '40 English + 30 ' + input.language : 'Can include ' + input.language + ' terms'}
++- Brand-specific and premium/niche terms from the brief
++- Regional terms, SKU-related searches, competitive positioning`;
++})()}
+ 
+ RULES:
+-1. Every keyword = a real Google search query. NOT research themes.
+-2. Part A keywords should be GENERIC — they WILL have search volume.
+-3. Part B can be more niche but must still be plausible search queries.
+-4. ${input.language} language terms where natural.
+-5. NO duplicates. NO academic phrases.
+-6. DETERMINISTIC ORDERING: Always start Part A with these exact keywords in order: "${coreProduct}", "${coreProduct} price", "best ${coreProduct}", "${coreProduct} near me", "buy ${coreProduct} online", "${coreProduct} brand", "${coreProduct} review". Then add the rest.
++1. Every keyword = a real Google search query people actually type. NOT research themes or academic phrases.
++2. DIVERSITY: No more than 5 keywords should share the same 3-word prefix. Spread across brands, conditions, features, comparisons.
++3. LENGTH: At least 50 keywords must be 1-3 words. Maximum 4 words for Part A. Part B can go up to 5 words.
++4. BRANDS: Include at least 20 competitor brand names as standalone 1-2 word keywords.
++5. ${input.language} language terms where natural.
++6. NO duplicates. NO academic phrases. NO keywords over 6 words.
+ 7. For the SAME brief, you MUST generate the SAME keywords every time. Be systematic, not creative.
+ 
+ Output ONLY JSON.`;
