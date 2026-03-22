@@ -87,7 +87,7 @@ const DemandHeroCard: React.FC<{
                         </span>
                         <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold ${trendColor} bg-white/10`}>
                             {trendIcon}
-                            {trend > 0 ? '+' : ''}{trend.toFixed(1)}% 5Y
+                            {trend > 0 ? '+' : ''}{trend.toFixed(1)}% Trend
                         </div>
                     </div>
                 </div>
@@ -130,14 +130,24 @@ const DemandHeroCard: React.FC<{
                             bgColor={spread >= 7 ? 'bg-sky-50/50' : spread >= 4 ? 'bg-orange-50/50' : 'bg-red-50/50'}
                             icon={<Layers className="w-4 h-4" style={{ color: spread >= 7 ? '#0284c7' : spread >= 4 ? '#ea580c' : '#dc2626' }} />}
                         />
-                        <MetricGauge
-                            value={Math.abs(trend)} max={50}
-                            label="5-Year Momentum"
-                            sublabel={trend > 5 ? 'Strong growth trajectory' : trend > 0 ? 'Modest positive movement' : trend > -5 ? 'Flat — needs category activation' : 'Declining — structural headwinds'}
-                            color={trend > 5 ? '#059669' : trend > 0 ? '#0284c7' : trend > -5 ? '#6b7280' : '#dc2626'}
-                            bgColor={trend > 5 ? 'bg-emerald-50/50' : trend > 0 ? 'bg-sky-50/50' : trend > -5 ? 'bg-slate-50' : 'bg-red-50/50'}
-                            icon={trend > 0 ? <TrendingUp className="w-4 h-4" style={{ color: trend > 5 ? '#059669' : '#0284c7' }} /> : <TrendingDown className="w-4 h-4" style={{ color: '#dc2626' }} />}
-                        />
+                        <div className={`rounded-2xl p-5 border ${trend > 2 ? 'bg-emerald-50/50 border-emerald-200' : trend < -2 ? 'bg-red-50/50 border-red-200' : 'bg-slate-50 border-slate-200'}`}>
+                            <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2">
+                                    <div className={`p-1.5 rounded-lg ${trend > 2 ? 'bg-emerald-100' : trend < -2 ? 'bg-red-100' : 'bg-slate-200'}`}>
+                                        {trend > 0 ? <TrendingUp className="w-4 h-4 text-emerald-600" /> : trend < -2 ? <TrendingDown className="w-4 h-4 text-red-500" /> : <Minus className="w-4 h-4 text-slate-400" />}
+                                    </div>
+                                    <span className="text-[9px] font-black uppercase tracking-[0.12em] text-slate-500">Search Trend</span>
+                                </div>
+                            </div>
+                            <div className="flex items-end gap-2 mb-1">
+                                <span className={`text-3xl font-black tracking-tight ${trend > 2 ? 'text-emerald-600' : trend < -2 ? 'text-red-500' : 'text-slate-500'}`}>
+                                    {trend > 0 ? '+' : ''}{trend.toFixed(1)}%
+                                </span>
+                            </div>
+                            <p className={`text-[10px] font-medium ${trend > 2 ? 'text-emerald-600/70' : trend < -2 ? 'text-red-400' : 'text-slate-400'}`}>
+                                {trend > 10 ? 'Strong growth — category expanding' : trend > 2 ? 'Growing — rising consumer interest' : trend > -2 ? 'Stable — mature demand pattern' : 'Declining — contraction signals'}
+                            </p>
+                        </div>
                     </div>
                 </div>
             </div>

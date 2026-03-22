@@ -126,7 +126,10 @@ export const DemandRunner = {
                     language_code: language,
                     country_code: country,
                     category_id: categoryId,
-                    created_at_iso: r.created_at_iso || new Date().toISOString()
+                    created_at_iso: r.created_at_iso || new Date().toISOString(),
+                    demandScore: r.demandScore,
+                    cpc: r.cpc,
+                    competition: r.competition,
                 };
                 
                 if (isDemandEligible(row)) {
