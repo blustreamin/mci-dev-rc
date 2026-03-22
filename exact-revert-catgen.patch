@@ -1,0 +1,45 @@
+diff --git a/src/services/categoryGenerationService.ts b/src/services/categoryGenerationService.ts
+index 6f4344c..3e10e2c 100644
+--- a/src/services/categoryGenerationService.ts
++++ b/src/services/categoryGenerationService.ts
+@@ -21,14 +21,7 @@ function getApiKey(): string | undefined {
+ function safeParseJSON(input: string): any {
+     if (!input) return null;
+     let cleaned = input.replace(/```json/gi, "").replace(/```/g, "").trim();
+-    try { return JSON.parse(cleaned); } catch {}
+-    // Try extracting JSON object
+-    const objMatch = cleaned.match(/\{[\s\S]*\}/);
+-    if (objMatch) { try { return JSON.parse(objMatch[0]); } catch {} }
+-    // Try extracting JSON array
+-    const arrMatch = cleaned.match(/\[[\s\S]*\]/);
+-    if (arrMatch) { try { return JSON.parse(arrMatch[0]); } catch {} }
+-    return null;
++    try { return JSON.parse(cleaned); } catch (e) { return null; }
+ }
+ 
+ function slugify(text: string): string {
+@@ -162,13 +155,12 @@ Output ONLY JSON.`;
+         const resp1 = await ai.models.generateContent({
+             model: MODEL,
+             contents: prompt1,
+-            config: { maxOutputTokens: 8000, temperature: 0, responseMimeType: 'application/json' },
++            config: { maxOutputTokens: 8000, temperature: 0 },
+         });
+ 
+         const parsed = safeParseJSON(resp1?.text || '');
+         if (!parsed?.category || !parsed?.defaultKeywords) {
+-            console.error(`[CategoryGen] Call 1 FAILED. Response length: ${(resp1?.text || '').length}. Preview: ${(resp1?.text || '').substring(0, 300)}`);
+-            return { ok: false, error: "AI returned invalid structure. Check browser console for details.", rawResponse: (resp1?.text || '').substring(0, 500) };
++            return { ok: false, error: "AI returned invalid structure.", rawResponse: (resp1?.text || '').substring(0, 500) };
+         }
+         if ((parsed.anchors?.length || 0) < 3) {
+             return { ok: false, error: "Too few anchors." };
+@@ -216,7 +208,7 @@ Output ONLY a JSON array: ["keyword1", "keyword2", ...]`;
+                 const resp = await ai.models.generateContent({
+                     model: MODEL,
+                     contents: expandPrompt,
+-                    config: { maxOutputTokens: 4000, temperature: 0, responseMimeType: 'application/json' },
++                    config: { maxOutputTokens: 4000, temperature: 0 },
+                 });
+                 const expanded = safeParseJSON(resp?.text || '');
+                 if (Array.isArray(expanded)) {
