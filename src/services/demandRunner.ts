@@ -282,6 +282,19 @@ export const DemandRunner = {
             
             console.log(`[DEMAND_ENGINE][WRITE_OK] doc=${savedDoc.docId} fingerprint=${savedDoc.corpusFingerprint}`);
 
+            // Also cache in PlatformDB for deep dive / playbook access
+            try {
+                await PlatformDB.setCache(`demand_latest_${categoryId}`, {
+                    categoryId,
+                    month,
+                    metrics: payload,
+                    savedAt: new Date().toISOString(),
+                });
+                console.log(`[DEMAND_ENGINE][PLATFORMDB_CACHE] Cached demand for ${categoryId}`);
+            } catch (e) {
+                console.warn(`[DEMAND_ENGINE][PLATFORMDB_CACHE] Failed:`, e);
+            }
+
             return {
                 ok: true,
                 categoryId,

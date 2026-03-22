@@ -78,34 +78,29 @@ export const ProjectDeepDiveService = {
         let demandSummary = 'No demand data available';
         let metrics = { demand_index_mn: 0, readiness: 0, spread: 0, trend: 0 };
 
-        // Try multiple sources for demand data
         try {
-            // 1. Try PlatformDB demand output (month-keyed)
-            const now = new Date();
-            const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-            demandData = await PlatformDB.getDemandOutput(categoryId, month);
+            // Priority 1: PlatformDB cache (written by demand runner after each sweep)
+            demandData = await PlatformDB.getCache(`demand_latest_${categoryId}`);
             
-            // 2. Try cache key
+            // Priority 2: PlatformDB demand output (month-keyed)
             if (!demandData) {
-                demandData = await PlatformDB.getCache(`demand_${categoryId}`);
+                const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+                demandData = await PlatformDB.getDemandOutput(categoryId, month);
             }
 
-            // 3. Try DemandOutputStore (Firestore) as fallback
+            // Priority 3: Firestore fallback
             if (!demandData) {
-                try {
-                    const { DemandOutputStore } = await import('./demandOutputStore');
-                    const fsDoc = await DemandOutputStore.readDemandDoc({ categoryId, month, country: project.geo.country, language: project.geo.language });
-                    if (fsDoc) demandData = fsDoc;
-                } catch (e) {
-                    console.warn('[DeepDive] Firestore demand fallback failed:', e);
-                }
+                const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+                const { DemandOutputStore, DEMAND_OUTPUT_VERSION } = await import('./demandOutputStore');
+                const fsRes = await DemandOutputStore.readDemandDoc({ categoryId, month, country: project.geo.country, language: project.geo.language, runtimeTargetVersion: DEMAND_OUTPUT_VERSION });
+                if (fsRes?.ok && fsRes.data) demandData = { metrics: fsRes.data };
             }
         } catch (e) {
-            console.warn('[DeepDive] Demand loading failed:', e);
+            console.warn('[DeepDive] Demand loading error:', e);
         }
 
         if (demandData) {
-            const m = demandData.metrics || demandData.payload?.metrics || demandData;
+            const m = demandData.metrics || demandData.payload || demandData;
             metrics = {
                 demand_index_mn: m.demand_index_mn || m.demandIndexMn || 0,
                 readiness: m.metric_scores?.readiness || m.readiness || 0,
@@ -115,7 +110,11 @@ export const ProjectDeepDiveService = {
             demandSummary = `Demand: ${metrics.demand_index_mn.toFixed(2)} Mn searches, Readiness: ${metrics.readiness.toFixed(1)}/10, Spread: ${metrics.spread.toFixed(1)}/10, Trend: ${metrics.trend}%`;
             emit('GATHERING', `Demand loaded: ${demandSummary}`, 30);
         } else {
-            emit('GATHERING', 'No demand data found — generating with corpus data only', 30);
+            // Compute basic metrics from corpus as ultimate fallback
+            const totalVol = validRows.reduce((s: number, r: any) => s + (r.volume || 0), 0);
+            metrics.demand_index_mn = totalVol / 1_000_000;
+            demandSummary = `Demand (from corpus): ${metrics.demand_index_mn.toFixed(2)} Mn searches`;
+            emit('GATHERING', `No demand sweep found — using corpus volume: ${demandSummary}`, 30);
         }
 
         emit('GATHERING', 'Loading market signals...', 40);
