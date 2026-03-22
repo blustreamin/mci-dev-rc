@@ -61,41 +61,91 @@ export async function generateCategoryConfig(
 
     const ai = new GoogleGenAI({ apiKey });
     const startTime = Date.now();
-    const STEP_TIMES = [15, 8, 8, 8, 8, 8]; // estimated seconds per step
+    const STEP_TIMES = [3, 15, 8, 8, 8, 8, 8]; // estimated seconds per step
 
     const emitProgress = (step: number, phase: string, keywords: number) => {
         const elapsed = (Date.now() - startTime) / 1000;
         const remaining = STEP_TIMES.slice(step).reduce((s, v) => s + v, 0);
-        onProgress?.({ step: step + 1, totalSteps: 6, phase, keywords, elapsedSec: Math.round(elapsed), estimatedRemainingSec: Math.round(remaining) });
+        onProgress?.({ step: step + 1, totalSteps: 7, phase, keywords, elapsedSec: Math.round(elapsed), estimatedRemainingSec: Math.round(remaining) });
     };
 
-    // --- CALL 1: Structure + 150 seed keywords ---
-    const prompt1 = `You are a search keyword researcher. Keywords will be validated against Google Ads volume data.
+    // --- CALL 0: Extract core product term via LLM (deterministic) ---
+    // This ensures consistent extraction regardless of brief phrasing
+    let coreProduct = '';
+    try {
+        emitProgress(0, 'Extracting core product term from brief...', 0);
+        const extractResp = await ai.models.generateContent({
+            model: MODEL,
+            contents: `Extract the SINGLE core product term from this brief. Return ONLY the product term (1-2 words, lowercase). No explanation.
 
-Category: "${input.categoryText}"
+Brief: "${input.categoryText}"
+
+Examples:
+- "Indiska Paneer is a premium artisanal fresh malai paneer brand..." → "paneer"
+- "A luxury beard oil brand targeting urban men..." → "beard oil"  
+- "Premium organic dog food for Indian pet owners..." → "dog food"
+- "Electric scooter startup competing with Ola and Ather..." → "electric scooter"
+
+Return ONLY the product term:`,
+            config: { maxOutputTokens: 50, temperature: 0 },
+        });
+        coreProduct = (extractResp?.text || '').trim().toLowerCase().replace(/['"]/g, '');
+    } catch (e) {
+        // Fallback: heuristic extraction
+        const briefWords = input.categoryText.toLowerCase().split(/\s+/);
+        const commonProducts = ['paneer', 'cheese', 'milk', 'yogurt', 'butter', 'ghee', 'shampoo', 'soap', 'oil', 'cream', 'serum', 'phone', 'laptop', 'car', 'bike', 'scooter', 'tea', 'coffee', 'snack', 'chocolate'];
+        coreProduct = commonProducts.find(p => briefWords.includes(p)) || briefWords.filter(w => w.length >= 4)[0] || 'product';
+    }
+    console.log(`[CategoryGen] Core product term: "${coreProduct}"`);
+    emitProgress(0, `Core product: "${coreProduct}"`, 0);
+
+    // --- CALL 1: Structure + 150 seed keywords (MANDATORY GENERIC + BRAND SPECIFIC) ---
+    const prompt1 = `You are a search keyword researcher. Keywords will be validated against Google Ads search volume data.
+
+BRIEF: "${input.categoryText}"
+CORE PRODUCT: "${coreProduct}"
 Industry: ${input.industry}
 Country: ${input.countryName} (${input.countryCode})
 Language: ${input.language}
 
 Generate JSON:
 {
-    "category": "<Professional category name>",
+    "category": "<SHORT professional category name, 3-5 words max>",
     "consumerDescription": "<2-3 sentences about this category for consumers in ${input.countryName}>",
-    "anchors": ["<8-12 strategic research pillars — e.g. Product Quality, Price & Value, Brand Trust, Purchase Channels, Health & Nutrition, Cooking & Usage, Freshness & Storage, Regional Preferences, Premium vs Mass, Online vs Offline>"],
+    "anchors": ["<8-12 strategic research pillars>"],
     "subCategories": [{"name": "<n>", "anchors": ["<4-6 specific anchors>"]}],
-    "defaultKeywords": ["<EXACTLY 150 search keywords>"],
+    "defaultKeywords": ["<EXACTLY 150 keywords — see SPLIT below>"],
     "keyBrands": ["<10-20 brands in ${input.countryName}>"]
 }
 
-IMPORTANT: Generate 8-12 subCategories covering distinct research dimensions. NOT 3-4.
+IMPORTANT: Generate 8-12 subCategories covering distinct research dimensions.
 
-KEYWORD RULES:
-- Every keyword = a real Google search query people in ${input.countryName} would type.
-- Mix: 30 head terms (1-2 words), 70 mid-tail (3-4 words), 50 long-tail (5+ words).
-- Include: brand queries, price queries, "best X", "X vs Y", "how to", "X review", "buy X online".
-- 80%+ must contain "${input.categoryText}" or a close variant.
-- Specific to ${input.countryName}. Use local platforms and currency.
-- NO duplicates. NO academic phrases. NO standalone substitute-product terms.
+CRITICAL KEYWORD SPLIT — your keywords will be checked against Google Ads. Zero-volume keywords are USELESS.
+
+PART A: MANDATORY GENERIC KEYWORDS (80 keywords) — These MUST have search volume:
+- Head terms: "${coreProduct}", "${coreProduct} price", "${coreProduct} near me", "best ${coreProduct}", "buy ${coreProduct} online"
+- Brand queries: "[Brand] ${coreProduct}" for top 10 brands
+- Price: "${coreProduct} price per kg", "${coreProduct} 1kg price", "cheap ${coreProduct}", "${coreProduct} rate today"
+- Comparison: "${coreProduct} vs [alternative]", "best ${coreProduct} brand India"
+- How-to: "how to store ${coreProduct}", "how to make ${coreProduct}", "${coreProduct} recipes"
+- Purchase: "buy ${coreProduct} online", "${coreProduct} home delivery", "${coreProduct} on Amazon", "${coreProduct} BigBasket"
+- Health: "${coreProduct} nutrition", "${coreProduct} protein", "${coreProduct} calories", "is ${coreProduct} healthy"
+- These are GENERIC — do NOT include the brand name from the brief. Just "${coreProduct}" + modifiers.
+
+PART B: BRIEF-SPECIFIC KEYWORDS (70 keywords) — Niche terms from the brief:
+- Brand-specific: terms related to the specific brand/positioning described in the brief
+- Premium/artisanal variants, texture terms, SKU-related searches
+- Regional terms specific to the geography mentioned in the brief
+- Competitive positioning queries
+
+RULES:
+1. Every keyword = a real Google search query. NOT research themes.
+2. Part A keywords should be GENERIC — they WILL have search volume.
+3. Part B can be more niche but must still be plausible search queries.
+4. ${input.language} language terms where natural.
+5. NO duplicates. NO academic phrases.
+6. DETERMINISTIC ORDERING: Always start Part A with these exact keywords in order: "${coreProduct}", "${coreProduct} price", "best ${coreProduct}", "${coreProduct} near me", "buy ${coreProduct} online", "${coreProduct} brand", "${coreProduct} review". Then add the rest.
+7. For the SAME brief, you MUST generate the SAME keywords every time. Be systematic, not creative.
 
 Output ONLY JSON.`;
 
@@ -121,16 +171,15 @@ Output ONLY JSON.`;
         console.log(`[CategoryGen] Call 1 done: ${allKeywords.length} kw, ${brands.length} brands`);
         emitProgress(1, `Structure ready: ${allKeywords.length} keywords, ${brands.length} brands`, allKeywords.length);
 
-        // --- CALLS 2-6: Keyword expansion (100 each, 2s delay between) ---
-        // 150 seed + 5×100 expansion = 650 before dedup → ~500 after
+        // --- CALLS 2-6: Keyword expansion (100 each, 2.5s delay between) ---
         const langContext = input.language.includes(',') ? `Generate keywords in ALL of these languages: ${input.language}. Include transliterated/romanized versions of non-English terms.` : `Generate keywords in ${input.language}.`;
         
         const batches = [
-            { focus: 'brand-specific and price queries', detail: `For each brand (${brands.slice(0, 8).join(', ')}): "[brand] ${input.categoryText} price", "[brand] review", "[brand] vs [competitor]", "buy [brand] online", "[brand] ${input.categoryText} 1kg price". Also price queries: "cheap ${input.categoryText}", "${input.categoryText} rate today", "${input.categoryText} wholesale price".` },
-            { focus: 'informational and how-to queries', detail: `"how to store ${input.categoryText}", "is ${input.categoryText} good for health", "${input.categoryText} nutrition 100g", "why does ${input.categoryText} become hard", "${input.categoryText} calories", "${input.categoryText} protein content", "homemade ${input.categoryText} recipe", "${input.categoryText} shelf life".` },
-            { focus: 'comparison and commercial queries', detail: `"${input.categoryText} vs [alternative]", "best ${input.categoryText} brand", "${input.categoryText} for [specific dish]", "organic vs regular ${input.categoryText}", "which ${input.categoryText} is best for cooking", "top 10 ${input.categoryText} brands in ${input.countryName}", "${input.categoryText} review".` },
-            { focus: `regional and language-specific queries in ${input.language}`, detail: `Generate keywords that people in different regions of ${input.countryName} would search. Include local city names, regional terms, and transliterated queries. ${langContext} Examples: "${input.categoryText} in [city name]", "[regional term for ${input.categoryText}]", "${input.categoryText} home delivery [city]", "best ${input.categoryText} [region]".` },
-            { focus: 'purchase channels, delivery, and occasion queries', detail: `"${input.categoryText} on Amazon", "${input.categoryText} BigBasket", "${input.categoryText} home delivery", "order ${input.categoryText} online", "${input.categoryText} near me", "${input.categoryText} subscription", "${input.categoryText} for [festival/occasion]", "${input.categoryText} gift pack", "bulk ${input.categoryText} order".` },
+            { focus: 'brand-specific and price queries', detail: `For each brand (${brands.slice(0, 8).join(', ')}): "[brand] ${coreProduct} price", "[brand] ${coreProduct} review", "[brand] vs [competitor]", "buy [brand] ${coreProduct} online". Also: "${coreProduct} price per kg", "cheap ${coreProduct}", "${coreProduct} rate today", "${coreProduct} wholesale price", "${coreProduct} 500g price", "${coreProduct} 1kg price".` },
+            { focus: 'informational and how-to queries', detail: `"how to store ${coreProduct}", "is ${coreProduct} good for health", "${coreProduct} nutrition 100g", "why does ${coreProduct} become hard", "${coreProduct} calories", "${coreProduct} protein content", "homemade ${coreProduct} recipe", "${coreProduct} shelf life", "${coreProduct} making at home", "${coreProduct} uses".` },
+            { focus: 'comparison and commercial queries', detail: `"${coreProduct} vs [alternative]", "best ${coreProduct} brand", "${coreProduct} for [specific dish]", "organic vs regular ${coreProduct}", "which ${coreProduct} is best for cooking", "top 10 ${coreProduct} brands in ${input.countryName}", "${coreProduct} review", "fresh vs packaged ${coreProduct}", "${coreProduct} quality test".` },
+            { focus: `regional and language-specific queries in ${input.language}`, detail: `Keywords people in different regions of ${input.countryName} would search. Include city names. ${langContext} Examples: "${coreProduct} in Chennai", "${coreProduct} in Bangalore", "${coreProduct} home delivery [city]", "best ${coreProduct} [region]", "${coreProduct} shop near me".` },
+            { focus: 'purchase channels, delivery, and occasion queries', detail: `"${coreProduct} on Amazon", "${coreProduct} BigBasket", "${coreProduct} Blinkit", "${coreProduct} home delivery", "order ${coreProduct} online", "${coreProduct} near me", "${coreProduct} subscription", "buy fresh ${coreProduct}", "${coreProduct} delivery app", "${coreProduct} online ${input.countryName}".` },
         ];
 
         for (let i = 0; i < batches.length; i++) {
@@ -144,7 +193,9 @@ Examples: ${b.detail}
 
 RULES:
 - Real search queries only. Things people actually type into Google.
-- 80%+ must contain "${input.categoryText}" or a variant.
+- 80%+ must contain "${coreProduct}" or a close variant.
+- These keywords MUST be generic enough to have Google Ads search volume. 
+- Do NOT use the full brand description. Use short terms like "${coreProduct}", "fresh ${coreProduct}", "best ${coreProduct}".
 - NO duplicates with existing keywords.
 - ${langContext}
 - Specific to ${input.countryName} market.
