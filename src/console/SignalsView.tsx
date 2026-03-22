@@ -9,20 +9,22 @@ import { PlatformSignalHarvester, HarvestedSignal, SignalPlatform } from '../ser
 import { useProjectStore } from '../config/ProjectStore';
 
 const PLATFORM_META: Record<string, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
-    'GOOGLE':      { label: 'Google', color: '#4285f4', bg: 'bg-blue-50', icon: <Globe className="w-3 h-3" /> },
-    'BLOG':        { label: 'Blog', color: '#6366f1', bg: 'bg-indigo-50', icon: <FileText className="w-3 h-3" /> },
-    'NEWS':        { label: 'News', color: '#0891b2', bg: 'bg-cyan-50', icon: <Globe className="w-3 h-3" /> },
+    'SEARCH_TREND': { label: 'Search Trend', color: '#4f46e5', bg: 'bg-indigo-50', icon: <Globe className="w-3 h-3" /> },
     'REDDIT':      { label: 'Reddit', color: '#ff4500', bg: 'bg-orange-50', icon: <MessageSquare className="w-3 h-3" /> },
     'YOUTUBE':     { label: 'YouTube', color: '#ff0000', bg: 'bg-red-50', icon: <Youtube className="w-3 h-3" /> },
-    'AMAZON':      { label: 'Amazon', color: '#ff9900', bg: 'bg-amber-50', icon: <ShoppingCart className="w-3 h-3" /> },
-    'QUORA':       { label: 'Quora', color: '#b92b27', bg: 'bg-red-50', icon: <MessageSquare className="w-3 h-3" /> },
-    'TWITTER':     { label: 'X/Twitter', color: '#1da1f2', bg: 'bg-sky-50', icon: <MessageSquare className="w-3 h-3" /> },
+    'ECOMMERCE':   { label: 'E-Commerce', color: '#ff9900', bg: 'bg-amber-50', icon: <ShoppingCart className="w-3 h-3" /> },
+    'SOCIAL':      { label: 'Social', color: '#1da1f2', bg: 'bg-sky-50', icon: <MessageSquare className="w-3 h-3" /> },
+    'BLOG':        { label: 'Blog', color: '#6366f1', bg: 'bg-violet-50', icon: <FileText className="w-3 h-3" /> },
+    'NEWS':        { label: 'News', color: '#0891b2', bg: 'bg-cyan-50', icon: <Globe className="w-3 h-3" /> },
+    'FORUM':       { label: 'Forum', color: '#ea580c', bg: 'bg-orange-50', icon: <MessageSquare className="w-3 h-3" /> },
 };
 
 const TYPE_COLORS: Record<string, string> = {
     'Content': 'bg-indigo-50 text-indigo-700',
     'Conversation': 'bg-emerald-50 text-emerald-700',
     'Transaction': 'bg-amber-50 text-amber-700',
+    'Trend': 'bg-violet-50 text-violet-700',
+    'Opportunity': 'bg-sky-50 text-sky-700',
 };
 
 export const SignalsView: React.FC = () => {
@@ -231,6 +233,8 @@ export const SignalsView: React.FC = () => {
             <div className="space-y-3">
                 {filtered.map(s => {
                     const meta = PLATFORM_META[s.platform] || { label: s.platform, color: '#666', bg: 'bg-slate-50', icon: null };
+                    const vol = (s as any).searchVolume || 0;
+                    const evidence = (s as any).evidenceKeywords || [];
                     return (
                         <div key={s.id} className="bg-white rounded-xl border border-slate-200 p-5 hover:shadow-md transition-shadow">
                             <div className="flex items-start justify-between gap-4 mb-2">
@@ -241,15 +245,24 @@ export const SignalsView: React.FC = () => {
                                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${TYPE_COLORS[s.signalType] || 'bg-slate-100 text-slate-500'}`}>
                                         {s.signalType}
                                     </span>
-                                    <span className="text-[10px] text-slate-400">{new Date(s.collectedAt).toLocaleDateString()}</span>
                                 </div>
-                                <span className="text-[9px] text-slate-400 shrink-0 font-mono">q: {s.queryUsed.substring(0, 40)}{s.queryUsed.length > 40 ? '...' : ''}</span>
+                                <div className="flex items-center gap-2 shrink-0">
+                                    {vol > 0 && <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">{vol >= 1000 ? `${(vol/1000).toFixed(1)}K` : vol} vol</span>}
+                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${s.confidence >= 0.8 ? 'bg-emerald-50 text-emerald-700' : s.confidence >= 0.6 ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
+                                        {Math.round(s.confidence * 100)}%
+                                    </span>
+                                </div>
                             </div>
                             <h3 className="font-bold text-slate-900 mb-1 text-sm">{s.title}</h3>
-                            {s.snippet && <p className="text-xs text-slate-500 mb-3 line-clamp-2">{s.snippet}</p>}
-                            <a href={s.url} target="_blank" rel="noopener noreferrer" className="text-[10px] font-bold text-indigo-600 hover:underline flex items-center gap-1">
-                                <ExternalLink className="w-3 h-3" /> {s.url.substring(0, 60)}{s.url.length > 60 ? '...' : ''}
-                            </a>
+                            {s.snippet && <p className="text-xs text-slate-600 mb-3 leading-relaxed">{s.snippet}</p>}
+                            {evidence.length > 0 && (
+                                <div className="flex flex-wrap gap-1.5">
+                                    {evidence.slice(0, 5).map((kw: string, i: number) => (
+                                        <span key={i} className="px-2 py-0.5 bg-slate-100 text-slate-600 text-[10px] font-medium rounded">{kw}</span>
+                                    ))}
+                                    {evidence.length > 5 && <span className="text-[10px] text-slate-400">+{evidence.length - 5} more</span>}
+                                </div>
+                            )}
                         </div>
                     );
                 })}

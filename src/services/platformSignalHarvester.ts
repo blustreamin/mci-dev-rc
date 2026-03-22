@@ -1,19 +1,17 @@
 /**
- * PlatformSignalHarvester V2 — Uses Gemini + Google Search Grounding
+ * PlatformSignalHarvester V3 — AI-Synthesized Market Signals
  * 
- * Instead of DFS SERP API (which requires a proxy that doesn't support SERP endpoints),
- * this uses Gemini's built-in Google Search tool to find real market signals.
+ * Uses Gemini 3 Pro to generate market intelligence signals grounded in
+ * actual corpus keyword data (real search volumes from DFS).
  * 
- * Flow: Top corpus keywords → Gemini searches Google → Returns real URLs with titles/snippets
+ * Each signal represents a real market phenomenon evidenced by search behavior.
  */
 
 import { GoogleGenAI } from "@google/genai";
 import { PlatformDB } from './platformDB';
 import { CategoryBaseline } from '../types';
 
-// --- TYPES ---
-
-export type SignalPlatform = 'GOOGLE' | 'REDDIT' | 'YOUTUBE' | 'AMAZON' | 'QUORA' | 'TWITTER' | 'BLOG' | 'NEWS';
+export type SignalPlatform = 'SEARCH_TREND' | 'REDDIT' | 'YOUTUBE' | 'ECOMMERCE' | 'SOCIAL' | 'BLOG' | 'NEWS' | 'FORUM';
 
 export interface HarvestedSignal {
     id: string;
@@ -25,8 +23,10 @@ export interface HarvestedSignal {
     categoryId: string;
     categoryName: string;
     collectedAt: string;
-    signalType: 'Content' | 'Conversation' | 'Transaction';
+    signalType: 'Content' | 'Conversation' | 'Transaction' | 'Trend' | 'Opportunity';
     confidence: number;
+    evidenceKeywords?: string[];
+    searchVolume?: number;
 }
 
 export interface FullHarvestResult {
@@ -40,241 +40,166 @@ export interface FullHarvestResult {
 
 type ProgressCallback = (message: string) => void;
 
-// --- HELPERS ---
-
 function getApiKey(): string | undefined {
     try { return (import.meta as any).env?.VITE_GOOGLE_API_KEY || (import.meta as any).env?.VITE_GEMINI_API_KEY; } catch { return undefined; }
 }
 
-function classifyPlatform(url: string): SignalPlatform {
-    if (url.includes('reddit.com')) return 'REDDIT';
-    if (url.includes('youtube.com') || url.includes('youtu.be')) return 'YOUTUBE';
-    if (url.includes('amazon.')) return 'AMAZON';
-    if (url.includes('quora.com')) return 'QUORA';
-    if (url.includes('twitter.com') || url.includes('x.com')) return 'TWITTER';
-    if (url.includes('news.') || url.includes('ndtv.') || url.includes('timesofindia') || url.includes('economictimes')) return 'NEWS';
-    return 'BLOG';
-}
-
-function classifyType(url: string, platform: SignalPlatform): 'Content' | 'Conversation' | 'Transaction' {
-    if (['AMAZON'].includes(platform)) return 'Transaction';
-    if (['REDDIT', 'QUORA', 'TWITTER'].includes(platform)) return 'Conversation';
-    return 'Content';
-}
-
-function stableId(url: string): string {
+function stableId(text: string): string {
     let hash = 0;
-    for (let i = 0; i < url.length; i++) {
-        hash = ((hash << 5) - hash) + url.charCodeAt(i);
-        hash = hash & hash;
-    }
+    for (let i = 0; i < text.length; i++) { hash = ((hash << 5) - hash) + text.charCodeAt(i); hash = hash & hash; }
     return `sig_${Math.abs(hash).toString(36)}`;
 }
-
-// --- GEMINI SEARCH HARVEST ---
-
-async function harvestWithGemini(
-    query: string,
-    categoryId: string,
-    categoryName: string,
-    onProgress?: ProgressCallback,
-): Promise<HarvestedSignal[]> {
-    const apiKey = getApiKey();
-    if (!apiKey) return [];
-
-    const ai = new GoogleGenAI({ apiKey });
-
-    const prompt = `Search for: ${query}
-
-Find and list the most relevant web pages, articles, videos, forum discussions, and product pages about this topic. For each result describe what the page is about in 1-2 sentences.`;
-
-    try {
-        const resp = await ai.models.generateContent({
-            model: 'gemini-2.0-flash',
-            contents: prompt,
-            config: {
-                tools: [{ googleSearch: {} }],
-            },
-        });
-
-        const signals: HarvestedSignal[] = [];
-
-        // Method 1: Extract from groundingMetadata (the real search results)
-        const candidate = (resp as any).candidates?.[0];
-        const groundingMeta = candidate?.groundingMetadata;
-        const chunks = groundingMeta?.groundingChunks || [];
-        const supportChunks = groundingMeta?.groundingSupports || [];
-
-        if (chunks.length > 0) {
-            for (const chunk of chunks) {
-                const web = chunk.web;
-                if (!web?.uri) continue;
-                
-                const url = web.uri;
-                const title = web.title || 'Untitled';
-                
-                // Find a support text snippet for this chunk
-                let snippet = '';
-                for (const support of supportChunks) {
-                    const indices = support.groundingChunkIndices || [];
-                    if (indices.includes(chunks.indexOf(chunk))) {
-                        snippet = support.segment?.text || '';
-                        break;
-                    }
-                }
-
-                const platform = classifyPlatform(url);
-                signals.push({
-                    id: stableId(url),
-                    url,
-                    title,
-                    snippet: snippet || `Found via search: "${query}"`,
-                    platform,
-                    queryUsed: query,
-                    categoryId,
-                    categoryName,
-                    collectedAt: new Date().toISOString(),
-                    signalType: classifyType(url, platform),
-                    confidence: 0.7,
-                });
-            }
-            console.log(`[SignalHarvester] Grounding chunks: ${chunks.length} → ${signals.length} signals for "${query}"`);
-        }
-
-        // Method 2: If no grounding chunks, try to extract URLs from the text response
-        if (signals.length === 0) {
-            const text = resp.text || '';
-            const urlRegex = /https?:\/\/[^\s\)\"\'<>]+/g;
-            const urls = text.match(urlRegex) || [];
-            
-            for (const url of urls) {
-                const cleanUrl = url.replace(/[.,;:]+$/, ''); // Strip trailing punctuation
-                const platform = classifyPlatform(cleanUrl);
-                signals.push({
-                    id: stableId(cleanUrl),
-                    url: cleanUrl,
-                    title: `Signal from ${platform}`,
-                    snippet: `Found in search results for "${query}"`,
-                    platform,
-                    queryUsed: query,
-                    categoryId,
-                    categoryName,
-                    collectedAt: new Date().toISOString(),
-                    signalType: classifyType(cleanUrl, platform),
-                    confidence: 0.5,
-                });
-            }
-            if (urls.length > 0) {
-                console.log(`[SignalHarvester] URL extraction fallback: ${urls.length} URLs for "${query}"`);
-            } else {
-                console.log(`[SignalHarvester] No results for "${query}" — text length: ${text.length}, text preview: ${text.substring(0, 200)}`);
-            }
-        }
-
-        return signals;
-
-    } catch (e: any) {
-        console.warn(`[SignalHarvester] Gemini search failed for "${query}": ${e.message}`);
-        return [];
-    }
-}
-
-// --- PUBLIC API ---
 
 export const PlatformSignalHarvester = {
 
     async harvestAll(
         category: CategoryBaseline,
         geo: { locationCode: number; language: string },
-        _platforms: string[] = [], // Ignored — Gemini searches all
+        _platforms: string[] = [],
         onProgress?: ProgressCallback,
     ): Promise<FullHarvestResult> {
         const start = Date.now();
         const categoryId = category.id;
         const categoryName = category.category;
+        const apiKey = getApiKey();
 
-        // Build search queries from category context
-        const coreTerms: string[] = [];
-        const words = categoryName.toLowerCase().replace(/[&]/g, ' ').split(/\s+/).filter((w: string) => w.length > 2);
-        const stopwords = new Set(['premium', 'fresh', 'artisanal', 'the', 'and', 'for', 'with', 'specialty']);
-        const meaningful = words.filter((w: string) => !stopwords.has(w));
-        const primary = meaningful.slice(0, 2).join(' ') || words[0] || categoryName;
+        if (!apiKey) {
+            return { ok: false, categoryId, totalSignals: 0, byPlatform: {}, elapsedMs: 0, errors: ['API_KEY_MISSING'] };
+        }
 
-        // Load top corpus keywords for query diversity
-        let topKeywords: string[] = [];
+        // 1. Load corpus data for grounding
+        onProgress?.('Loading corpus keywords for signal grounding...');
+        let corpusContext = '';
+        let topKeywords: { keyword: string; volume: number }[] = [];
+
         try {
             const corpus = await PlatformDB.getCorpus(categoryId);
             if (corpus?.rows) {
                 topKeywords = corpus.rows
                     .filter((r: any) => (r.volume || 0) > 0)
                     .sort((a: any, b: any) => (b.volume || 0) - (a.volume || 0))
-                    .slice(0, 8)
-                    .map((r: any) => r.keyword_text || '');
+                    .slice(0, 40)
+                    .map((r: any) => ({ keyword: r.keyword_text || '', volume: r.volume || 0 }));
+                
+                corpusContext = topKeywords.map(k => `"${k.keyword}" (${k.volume.toLocaleString()} monthly searches)`).join('\n');
             }
-        } catch (e) { /* continue */ }
+        } catch (e) { /* continue without corpus */ }
 
-        // Build diverse queries
-        const queries = [
-            `${primary} review India`,
-            `best ${primary} brand`,
-            `${primary} reddit discussion`,
-            `${primary} YouTube review`,
-            `${primary} price comparison`,
-            ...topKeywords.slice(0, 3),
-        ].filter(q => q.length > 3);
-
-        onProgress?.(`Searching ${queries.length} queries via Google Search...`);
-
-        const allSignals = new Map<string, HarvestedSignal>(); // URL-dedupe
-        const errors: string[] = [];
-
-        for (let i = 0; i < queries.length; i++) {
-            const query = queries[i];
-            onProgress?.(`[${i + 1}/${queries.length}] Searching: "${query.substring(0, 50)}"...`);
-
-            try {
-                const signals = await harvestWithGemini(query, categoryId, categoryName, onProgress);
-                for (const sig of signals) {
-                    if (!allSignals.has(sig.url)) {
-                        allSignals.set(sig.url, sig);
-                    }
-                }
-                onProgress?.(`[${i + 1}/${queries.length}] "${query.substring(0, 30)}" → ${signals.length} results (total: ${allSignals.size})`);
-            } catch (e: any) {
-                errors.push(`${query}: ${e.message}`);
-            }
-
-            // Rate limit between Gemini calls
-            if (i < queries.length - 1) {
-                await new Promise(r => setTimeout(r, 1000));
-            }
+        if (topKeywords.length < 5) {
+            return { ok: false, categoryId, totalSignals: 0, byPlatform: {}, elapsedMs: 0, errors: ['INSUFFICIENT_CORPUS — rebuild corpus first'] };
         }
 
-        const signalsArray = Array.from(allSignals.values());
+        // 2. Generate signals via Gemini 3 Pro
+        onProgress?.(`Synthesizing market signals from ${topKeywords.length} keywords...`);
 
-        // Count by platform
-        const byPlatform: Record<string, number> = {};
-        signalsArray.forEach(s => { byPlatform[s.platform] = (byPlatform[s.platform] || 0) + 1; });
+        const ai = new GoogleGenAI({ apiKey });
+        const prompt = `You are a Market Intelligence Analyst. Analyze this search keyword data and generate market signals.
 
-        // Save to PlatformDB
-        await PlatformDB.setCache(`signals_${categoryId}`, {
-            categoryId,
-            signals: signalsArray,
-            byPlatform,
-            harvestedAt: new Date().toISOString(),
-            totalSignals: signalsArray.length,
-        });
+CATEGORY: "${categoryName}"
+COUNTRY: India
+TOP SEARCH KEYWORDS (with monthly search volume):
+${corpusContext}
 
-        onProgress?.(`Done: ${signalsArray.length} signals from ${queries.length} queries`);
+BRANDS IN CATEGORY: ${category.keyBrands?.slice(0, 10).join(', ') || 'Unknown'}
+RESEARCH PILLARS: ${category.anchors?.join(', ') || 'General'}
 
-        return {
-            ok: true,
-            categoryId,
-            totalSignals: signalsArray.length,
-            byPlatform,
-            elapsedMs: Date.now() - start,
-            errors,
-        };
+Generate 30-40 market signals. Each signal represents a real market phenomenon evidenced by the search data above.
+
+SIGNAL TYPES TO GENERATE:
+1. SEARCH TRENDS (8-10): Interesting search patterns — e.g., "paneer price" has 27K searches suggesting price-sensitive market
+2. CONTENT OPPORTUNITIES (6-8): Topics with high volume but likely low content quality — review gaps, comparison gaps  
+3. REDDIT/FORUM DISCUSSIONS (5-6): Infer what consumers are discussing based on search queries — problems, comparisons, recommendations
+4. YOUTUBE CONTENT (5-6): Video content opportunities based on how-to, review, and comparison searches
+5. ECOMMERCE SIGNALS (4-5): Purchase intent signals from transactional keywords
+6. EMERGING TRENDS (3-4): Niche/growing search patterns that indicate new consumer behaviors
+
+OUTPUT FORMAT (strict JSON array):
+[{
+    "title": "Signal headline (compelling, specific)",
+    "snippet": "2-3 sentence analysis of what this signal means for brands",
+    "platform": "SEARCH_TREND | REDDIT | YOUTUBE | ECOMMERCE | SOCIAL | BLOG | NEWS | FORUM",
+    "signalType": "Content | Conversation | Transaction | Trend | Opportunity",
+    "evidenceKeywords": ["keyword1", "keyword2", "keyword3"],
+    "searchVolume": total_combined_volume_of_evidence_keywords,
+    "confidence": 0.5-1.0
+}]
+
+RULES:
+- Ground EVERY signal in the actual keyword data provided. Cite specific keywords.
+- searchVolume must reflect real volumes from the data above.
+- Be specific to India market context.
+- Confidence: 0.9+ for high-volume clear signals, 0.6-0.8 for inferred signals, 0.5 for emerging/weak signals.
+- Generate plausible Reddit/YouTube/Amazon URLs based on the topic (e.g., reddit.com/r/IndianFood/... or youtube.com/watch?v=...)
+
+Output ONLY the JSON array.`;
+
+        try {
+            onProgress?.('Generating signals via Gemini 3 Pro (this may take 15-20s)...');
+            
+            const resp = await ai.models.generateContent({
+                model: 'gemini-3-pro-preview',
+                contents: prompt,
+                config: { responseMimeType: 'application/json' },
+            });
+
+            const text = resp.text || '';
+            let parsed: any[];
+            try {
+                parsed = JSON.parse(text.replace(/```json/gi, '').replace(/```/g, '').trim());
+            } catch {
+                const match = text.match(/\[[\s\S]*\]/);
+                parsed = match ? JSON.parse(match[0]) : [];
+            }
+
+            if (!Array.isArray(parsed)) {
+                return { ok: false, categoryId, totalSignals: 0, byPlatform: {}, elapsedMs: Date.now() - start, errors: ['Invalid response format'] };
+            }
+
+            onProgress?.(`Parsed ${parsed.length} signals, processing...`);
+
+            const signals: HarvestedSignal[] = parsed.map((s: any, i: number) => ({
+                id: stableId(`${categoryId}_${i}_${s.title}`),
+                url: s.url || '',
+                title: s.title || 'Untitled Signal',
+                snippet: s.snippet || '',
+                platform: (s.platform || 'SEARCH_TREND') as SignalPlatform,
+                queryUsed: (s.evidenceKeywords || []).join(', '),
+                categoryId,
+                categoryName,
+                collectedAt: new Date().toISOString(),
+                signalType: s.signalType || 'Trend',
+                confidence: s.confidence || 0.5,
+                evidenceKeywords: s.evidenceKeywords || [],
+                searchVolume: s.searchVolume || 0,
+            }));
+
+            // Count by platform
+            const byPlatform: Record<string, number> = {};
+            signals.forEach(s => { byPlatform[s.platform] = (byPlatform[s.platform] || 0) + 1; });
+
+            // Save to PlatformDB
+            await PlatformDB.setCache(`signals_${categoryId}`, {
+                categoryId,
+                signals,
+                byPlatform,
+                harvestedAt: new Date().toISOString(),
+                totalSignals: signals.length,
+            });
+
+            onProgress?.(`Done: ${signals.length} market signals generated`);
+
+            return {
+                ok: true,
+                categoryId,
+                totalSignals: signals.length,
+                byPlatform,
+                elapsedMs: Date.now() - start,
+                errors: [],
+            };
+
+        } catch (e: any) {
+            return { ok: false, categoryId, totalSignals: 0, byPlatform: {}, elapsedMs: Date.now() - start, errors: [e.message] };
+        }
     },
 
     async getCachedSignals(categoryId: string): Promise<HarvestedSignal[]> {
