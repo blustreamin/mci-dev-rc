@@ -175,8 +175,15 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
                         validation_tier: 'AI_SEED',
                     };
                 });
-                await PlatformDB.saveCorpus(gen.id, corpus);
-                console.log(`[ScopeV2] Seed corpus: ${corpus.length} keywords (UNVERIFIED, pending DFS)`);
+                // Only write seed corpus if no DFS-verified corpus exists yet
+                const existingCorpus = await PlatformDB.getCorpus(gen.id);
+                const hasVerifiedData = existingCorpus?.rows?.some((r: any) => r.status === 'VALID' || r.volume > 0);
+                if (!hasVerifiedData) {
+                    await PlatformDB.saveCorpus(gen.id, corpus);
+                    console.log(`[ScopeV2] Seed corpus: ${corpus.length} keywords (UNVERIFIED, pending DFS)`);
+                } else {
+                    console.log(`[ScopeV2] Existing DFS-verified corpus found (${existingCorpus.rows.length} rows) — skipping seed overwrite`);
+                }
             }
         } catch (e) {
             console.warn('[ScopeV2] IndexedDB persist failed, continuing anyway', e);

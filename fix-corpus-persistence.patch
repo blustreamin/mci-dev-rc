@@ -1,0 +1,106 @@
+diff --git a/src/console/ScopeDefinitionV2.tsx b/src/console/ScopeDefinitionV2.tsx
+index 8ece3c3..abbbe10 100644
+--- a/src/console/ScopeDefinitionV2.tsx
++++ b/src/console/ScopeDefinitionV2.tsx
+@@ -175,8 +175,15 @@ export const ScopeDefinitionV2: React.FC<ScopeDefinitionV2Props> = ({ onProjectR
+                         validation_tier: 'AI_SEED',
+                     };
+                 });
+-                await PlatformDB.saveCorpus(gen.id, corpus);
+-                console.log(`[ScopeV2] Seed corpus: ${corpus.length} keywords (UNVERIFIED, pending DFS)`);
++                // Only write seed corpus if no DFS-verified corpus exists yet
++                const existingCorpus = await PlatformDB.getCorpus(gen.id);
++                const hasVerifiedData = existingCorpus?.rows?.some((r: any) => r.status === 'VALID' || r.volume > 0);
++                if (!hasVerifiedData) {
++                    await PlatformDB.saveCorpus(gen.id, corpus);
++                    console.log(`[ScopeV2] Seed corpus: ${corpus.length} keywords (UNVERIFIED, pending DFS)`);
++                } else {
++                    console.log(`[ScopeV2] Existing DFS-verified corpus found (${existingCorpus.rows.length} rows) — skipping seed overwrite`);
++                }
+             }
+         } catch (e) {
+             console.warn('[ScopeV2] IndexedDB persist failed, continuing anyway', e);
+diff --git a/src/services/geminiService.ts b/src/services/geminiService.ts
+index 76b5a0c..a0c2bce 100644
+--- a/src/services/geminiService.ts
++++ b/src/services/geminiService.ts
+@@ -152,24 +152,48 @@ export async function runPreSweepIntelligence(
+     let corpusSnapshotId = '';
+ 
+     if (isProjectCategory) {
+-        // BUILD SYNTHETIC CORPUS from AI-generated keywords
++        // TRY TO LOAD DFS-VERIFIED CORPUS FIRST — fall back to synthetic if not built yet
+         corpusSnapshotId = `proj_${category.id}_${Date.now()}`;
+-        logFn({ timestamp: new Date().toISOString(), stage: 'Strategy', category: category.category, step: 'LOAD', attempt: 1, status: 'Running', durationMs: 0, message: `[PROJECT_MODE] Building corpus from ${category.defaultKeywords.length} AI-generated keywords...` });
++        logFn({ timestamp: new Date().toISOString(), stage: 'Strategy', category: category.category, step: 'LOAD', attempt: 1, status: 'Running', durationMs: 0, message: `[PROJECT_MODE] Loading corpus...` });
+         
+-        const syntheticRows = category.defaultKeywords.map((kw, idx) => {
+-            // Assign keywords to anchors round-robin
+-            const anchorIdx = idx % category.anchors.length;
+-            const anchor = category.anchors[anchorIdx];
+-            return {
+-                keyword_id: `gen_${idx}`,
+-                keyword: kw,
+-                volume: 0, // Will be filled by demand sweep later
+-                anchor_id: anchor,
+-                intent_bucket: inferIntentFromKeyword(kw),
+-                status: 'active',
+-                active: true
+-            };
+-        });
++        let syntheticRows: any[] = [];
++        try {
++            const { PlatformDB } = await import('./platformDB');
++            const existingCorpus = await PlatformDB.getCorpus(category.id);
++            if (existingCorpus?.rows?.length > 0 && existingCorpus.rows.some((r: any) => r.status === 'VALID' || (r.volume && r.volume > 0))) {
++                // Use DFS-verified corpus — much better quality
++                syntheticRows = existingCorpus.rows.map((r: any) => ({
++                    keyword_id: r.keyword_id || `dfs_${r.keyword_text}`,
++                    keyword: r.keyword_text || r.keyword || '',
++                    volume: r.volume || 0,
++                    anchor_id: r.anchor_id || category.anchors[0] || 'general',
++                    intent_bucket: r.intent_bucket || inferIntentFromKeyword(r.keyword_text || ''),
++                    status: r.status || 'active',
++                    active: true
++                }));
++                logFn({ timestamp: new Date().toISOString(), stage: 'Strategy', category: category.category, step: 'LOAD', attempt: 1, status: 'Success', durationMs: 0, message: `[PROJECT_MODE] Using DFS-verified corpus: ${syntheticRows.length} keywords (${syntheticRows.filter((r: any) => r.volume > 0).length} with volume)` });
++            }
++        } catch (e) {
++            console.warn('[CNA] Failed to load PlatformDB corpus, falling back to AI keywords:', e);
++        }
++
++        // Fallback: build from AI-generated keywords if no DFS corpus
++        if (syntheticRows.length === 0) {
++            syntheticRows = category.defaultKeywords.map((kw, idx) => {
++                const anchorIdx = idx % category.anchors.length;
++                const anchor = category.anchors[anchorIdx];
++                return {
++                    keyword_id: `gen_${idx}`,
++                    keyword: kw,
++                    volume: 0,
++                    anchor_id: anchor,
++                    intent_bucket: inferIntentFromKeyword(kw),
++                    status: 'active',
++                    active: true
++                };
++            });
++            logFn({ timestamp: new Date().toISOString(), stage: 'Strategy', category: category.category, step: 'LOAD', attempt: 1, status: 'Running', durationMs: 0, message: `[PROJECT_MODE] No DFS corpus — using ${syntheticRows.length} AI-generated keywords` });
++        }
+         
+         // Chunk them (same as the original pipeline)
+         const chunkSize = 120;
+@@ -269,11 +293,11 @@ export async function runPreSweepIntelligence(
+ 
+     // 6. Persistence
+     if (isProjectCategory) {
+-        // PROJECT MODE: Save to IndexedDB
++        // PROJECT MODE: Save strategy output to IndexedDB — DO NOT overwrite DFS-verified corpus
+         const { PlatformDB } = await import('./platformDB');
+-        await PlatformDB.saveCorpus(category.id, chunks.flat());
++        // REMOVED: await PlatformDB.saveCorpus() — this was overwriting DFS-verified corpus with raw synthesis chunks
+         await PlatformDB.saveStrategyOutput(category.id, preSweep);
+-        logFn({ timestamp: new Date().toISOString(), stage: 'Strategy', category: category.category, step: 'PERSIST', attempt: 1, status: 'Success', durationMs: 0, message: `[PROJECT_MODE] Saved to IndexedDB: corpus=${chunks.flat().length} rows` });
++        logFn({ timestamp: new Date().toISOString(), stage: 'Strategy', category: category.category, step: 'PERSIST', attempt: 1, status: 'Success', durationMs: 0, message: `[PROJECT_MODE] Saved strategy output to IndexedDB (corpus preserved)` });
+     } else {
+         // LEGACY MODE: Save to Firestore
+         await OutputSnapshotStore.createOutputSnapshot(corpusSnapshotId, category.id, 'IN', 'en', undefined, preSweep, null);
