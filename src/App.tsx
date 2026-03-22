@@ -418,9 +418,8 @@ const AppInner: React.FC = () => {
                                 { gear: 'ONBOARDING', icon: LayoutDashboard, label: 'Scope' },
                                 { gear: 'STRATEGY', icon: Target, label: 'Consumer Needs' },
                                 { gear: 'DEMAND', icon: BarChart3, label: 'Demand' },
-                                { gear: 'DEEP_DIVE', icon: Microscope, label: 'Deep Dive' },
-                                // Playbook hidden
                                 { gear: 'SIGNALS', icon: Wifi, label: 'Signals' },
+                                { gear: 'DEEP_DIVE', icon: Microscope, label: 'Deep Dive' },
                             ].map(({ gear, icon: Icon, label }) => (
                                 <button 
                                     key={gear} 
@@ -464,7 +463,7 @@ const AppInner: React.FC = () => {
                         />
                     )}
                     {activeGear === 'DEEP_DIVE' && (
-                        <DeepDiveView initialContext={deepDiveContext} />
+                        <DeepDiveView />
                     )}
                     {activeGear === 'PLAYBOOK' && (
                         <div className="max-w-7xl mx-auto px-4 pb-20">
